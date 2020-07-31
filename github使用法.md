@@ -61,6 +61,15 @@ $ git pull origin master
 
 ・作業ディレクトリ内に`.gitignore`というファイルを作成し、テキストエディタなどを利用し、管理したくないファイル名やディレクトリ名を書き込む
 
+(例)
+ファイルの場合
+file.txt
+
+ディレクトリの場合
+dir/
+
+というように書き込む
+
 
 
 
@@ -76,6 +85,3 @@ $ git pull origin master
    	url = git@github.com:D1ngn/[新しいリポジトリ名].git
    	fetch = +refs/heads/*:refs/remotes/origin/*
    ```
-
-   
-

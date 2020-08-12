@@ -11,10 +11,18 @@ import librosa
 import soundfile as sf
 
 # 機械学習用
-# モデル
-from sklearn.linear_model import LinearRegression
-# 学習用
+# データセット
+from sklearn.datasets import make_blobs # クラスタリング用の等方性ガウス点群を生成
+from sklearn.datasets import fetch_20newsgroups
+# 特徴量エンジニアリング
+from sklearn.feature_extraction.text import TfidfVectorizer
+# データ作成用
 from sklearn.model_selection import train_test_split
+# モデル
+from sklearn.pipeline import make_pipeline # 複数モデルを連続で実行するためのパイプライン
+from sklearn.linear_model import LinearRegression
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.svm import SVC # Support Vector Classifier
 #評価用
 from sklearn.metrics import accuracy_score
 
@@ -32,24 +40,24 @@ from sklearn.metrics import accuracy_score
 音声処理
 """
 #　音声データをロードし、指定された秒数とサンプリングレートでリサンプル
-def load_audio_file(file_path, length, num_channels, sampling_rate=16000):
+def load_audio_file(file_path, length, sampling_rate=16000):
     data, sr = sf.read(file_path)
     # データが設定値よりも大きい場合は大きさを超えた分をカットする
     # データが設定値よりも小さい場合はデータの後ろを0でパディングする
-    # 1ch(モノラル)の場合
-    if num_channels == 1:
+    # シングルチャンネル(モノラル)の場合 (data.shape: [num_samples,])
+    if data.ndim == 1:
         if len(data) > sampling_rate*length:
             data = data[:sampling_rate*length]
         else:
             data = np.pad(data, (0, max(0, sampling_rate*length - len(data))), "constant")
-    # マルチチャンネルの場合
-    elif num_channels > 1:
+    # マルチチャンネルの場合 (data.shape: [num_samples, num_channels])
+    elif data.ndim == 2:
         if data.shape[0] > sampling_rate*length:
             data = data[:sampling_rate*length, :]
         else:
             data = np.pad(data, [(0, max(0, sampling_rate*length-data.shape[0])), (0, 0)], "constant")
     else:
-        print("please designate correct num_channels")
+        print("number of audio channels are incorrect")
     return data
 
 # 音声データを指定したサンプリングレートで保存
@@ -72,11 +80,43 @@ def wave_to_spec(data, n_fft, hop_length, win_length):
     # mel_spec = librosa.feature.melspectrogram(data, sr=sr, n_mels=128) # メルスペクトログラムを用いる場合はこっちを使う
     return mag, phase
 
+# waveファイルを読み込み波形のグラフを保存する
+def wave_plot(input_path, output_path, fig_title=None):
+    # open wave file
+    wf = wave.open(input_path,'r')
+
+    # load wave data
+    length = 5 # 読み出すオーディオの長さ[s]
+    rate = wf.getframerate()  # サンプリングレート[1/s]
+    chunk_size = rate * length
+    amp  = (2**8) ** wf.getsampwidth() / 2
+    data = wf.readframes(chunk_size)   # バイナリ読み込み
+    data = np.frombuffer(data,'int16') # intに変換
+    data = data / amp                  # 振幅正規化
+
+    # make time axis
+    size = float(chunk_size)  # 波形サイズ
+    x = np.arange(0, size/rate, 1.0/rate)
+
+    # 図に描画
+    sns.set() # スタイルをきれいにする
+    fig = plt.figure(facecolor='w', linewidth=5, edgecolor='black')
+    # ax = fig.add_subplot(1, 1, 1, ylim=(-0.5, 0.5)) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
+    ax = fig.add_subplot(1, 1, 1, title=fig_title) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
+    ax.set_xlabel('time[s]') # x軸名を設定
+    ax.set_ylabel('magnitude') # y軸名を設定
+    ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(1.0)) # x軸の主目盛を1.0ごとに表示
+    ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(0.10)) # y軸の主目盛を0.10ごとに表示
+    file_name = os.path.basename(output_path).split('.')[0] # データの名前を設定
+    ax.plot(x, data, label='{}'.format(file_name)) # データをプロット
+    ax.legend(edgecolor="black") # 凡例を追加
+    fig.savefig(output_path) # グラフを保存
 
 """
 機械学習手法
 """
-# 線形回帰
+# 回帰(教師あり学習)
+# 線形回帰()
 def linear_regression(X_train, X_test, y_train, y_test):
     """
     args:
@@ -98,11 +138,64 @@ def linear_regression(X_train, X_test, y_train, y_test):
     return y_model
 
 
-# 分類
+# 分類(教師あり学習)
+# ナイーブベイズ分類(各ラベルからのデータが単純なガウス分布や多項分布に基づいていると仮定)
+# 多項分布に基づくテキスト分類
+class NaiveBayes():
+    def __init__(self):
+        self.model = make_pipeline(TfidfVectorizer(), MultinomialNB()) # TF-IDFによる単語の重み付け(ベクトル化)+多項分布ナイーズベイズ
+
+    def fit(self, data, target):
+        self.model.fit(data, target) # モデル学習
+
+    def text_category_classification(self, text, labels):
+        pred = self.model.predict([text]) # 予測したラベルのインデックスを取得
+        category = labels[pred[0]]
+        return category
+
+
+# サポートベクターマシンによる点群データの分類
+class SupportVectorClassify():
+    def __init__(self):
+        self.model = SVC(kernel='linear', C=1E10) # モデルのインスタンスを生成　C：正規化パラメータ
+
+    def fit(self, X, y):
+        self.model.fit(X, y) # モデル学習
+
+    # サポートベクターマシンの決定直線を描画
+    def plot_svc_decision_function(self, X, y, ax=None, plot_support=True):
+        plt.scatter(X[:, 0], X[:, 1], c=y, s=50, cmap='autumn')
+        if ax is None:
+            ax = plt.gca() # get current axis
+
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+
+        x = np.linspace(xlim[0], xlim[1], 30)
+        y = np.linspace(ylim[0], ylim[1], 30)
+        Y, X = np.meshgrid(y, x) # 格子点の座標データを生成
+
+        xy = np.vstack([X.ravel(), Y.ravel()]).T
+
+        P = self.model.decision_function(xy).reshape(X.shape)
+
+        ax.contour(X, Y, P, colors='k', levels=[-1, 0, 1], alpha=0.5, linestyles=['--', '-', '--']) # 等高線を描画
+
+        if plot_support:
+            ax.scatter(self.model.support_vectors_[:, 0],
+                       self.model.support_vectors_[:, 1],
+                       s=300, linewidth=1, facecolors='none', edgecolor='black')
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+        plt.show()
+
+
+# クラスタリング(教師なし学習)
 
 
 
-# 次元削減
+# 次元削減(教師なし学習)
 
 
 
@@ -157,8 +250,23 @@ if __name__ == "__main__":
     # sin(x)
 
     # 線形回帰用
-    x = 10 * np.random.rand(50)
-    X = x[:, np.newaxis] # shape: [n_samples,] → [n_samples, n_features]の形式へ
-    y = 3 * x + np.random.randn(50)
-    X1, X2, y1, y2 = train_test_split(X, y, random_state=0, test_size=0.33) # データをtrain用とtest用に2:1で分ける
-    output = linear_regression(X1, X2, y1, y2)
+    # x = 10 * np.random.rand(50)
+    # X = x[:, np.newaxis] # shape: [n_samples,] → [n_samples, n_features]の形式へ
+    # y = 3 * x + np.random.randn(50)
+    # X1, X2, y1, y2 = train_test_split(X, y, random_state=0, test_size=0.33) # データをtrain用とtest用に2:1で分ける
+    # output = linear_regression(X1, X2, y1, y2)
+
+    # 多項分布ナイーブベイズに基づくテキストカテゴリ分類用
+    # categories = ['talk.religion.misc', 'soc.religion.christian', 'sci.space', 'comp.graphics']
+    # train = fetch_20newsgroups(subset='train', categories=categories)　# データ取得
+    # test = fetch_20newsgroups(subset='test', categories=categories)　# データ取得
+    # naive_bayes = NaiveBayes() # モデル初期化
+    # naive_bayes.fit(train.data, train.target) # モデル学習
+    # predicted_result = naive_bayes.text_category_classification('sending a payload to the ISS', train.target_names) #　テキスト分類
+    # print(predicted_result)
+
+    # サポートベクターマシン用
+    X, y = make_blobs(n_samples=50, centers=2, random_state=0, cluster_std=0.60)
+    points_svc = SupportVectorClassify() # モデル初期化
+    points_svc.fit(X, y)
+    points_svc.plot_svc_decision_function(X, y)

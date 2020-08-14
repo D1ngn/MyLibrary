@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from mpl_toolkits import mplot3d # 3次元描画用
 
 # 画像処理用
 import cv2
@@ -9,10 +10,12 @@ from PIL import Image
 # 音声処理用
 import librosa
 import soundfile as sf
+# from .audio_evaluation.separation import bss_eval_sources, bss_eval_images
 
 # 機械学習用
 # データセット
 from sklearn.datasets import make_blobs # クラスタリング用の等方性ガウス点群を生成
+from sklearn.datasets import make_circles # 大きい円と小さい円を描くように２次元の点群を生成
 from sklearn.datasets import fetch_20newsgroups
 # 特徴量エンジニアリング
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -112,6 +115,43 @@ def wave_plot(input_path, output_path, fig_title=None):
     ax.legend(edgecolor="black") # 凡例を追加
     fig.savefig(output_path) # グラフを保存
 
+# 混合音声とモデルが推定した音声の質を評価(SDR, SIR, SARを算出)
+def audio_eval(audio_length, target_audio_path, interference_audio_path, mixed_audio_path, estimated_audio_path):
+    """
+    bss_eval_sourcesとbss_eval_imagesに関しては
+    「http://bass-db.gforge.inria.fr/bss_eval/」
+    を参照
+    参考にしたソースコードは「https://github.com/craffel/mir_eval」
+    """
+    from .audio_evaluation.separation import bss_eval_sources, bss_eval_images
+
+    target = load_audio_file(target_audio_path, audio_length)[np.newaxis, :]
+    interference = load_audio_file(interference_audio_path, audio_length)[np.newaxis, :]
+    mixed = load_audio_file(mixed_audio_path, audio_length)[np.newaxis, :]
+    estimated = load_audio_file(estimated_audio_path, audio_length)[np.newaxis, :]
+
+    reference = np.concatenate([target, interference], 0) # 目的音と外的雑音を結合する
+    mixed = np.concatenate([mixed, mixed], 0) # referenceと同じ形になるように結合
+    estimated = np.concatenate([estimated, estimated], 0) # referenceと同じ形になるように結合
+
+    # シングルチャンネル用 (シングルチャンネルの場合音声はshape:[1, num_samples]の形式)
+    if target.ndim == 2:
+        mixed_result = bss_eval_sources(reference, mixed) # 混合音声のSDR, SIR, SARを算出
+        reference_result = bss_eval_sources(reference, estimated) # モデルが推定した音声のSDR, SIR, SARを算出
+        print("SDR_mix: {:.3f}, SIR_mix: {:.3f}, SAR_mix: {:.3f}".format(mixed_result[0][0], mixed_result[1][0], mixed_result[2][0]))
+        print("SDR_est: {:.3f}, SIR_est: {:.3f}, SAR_est: {:.3f}".format(reference_result[0][0], reference_result[1][0], reference_result[2][0]))
+
+    # マルチチャンネル用 (マルチチャンネルの場合音声はshape:[1, num_samples, num_channels]の形式)
+    elif target.ndim == 3:
+        mixed_result = bss_eval_images(reference, mixed) # 混合音声のSDR, SIR, SARを算出
+        reference_result = bss_eval_images(reference, estimated) # モデルが推定した音声のSDR, SIR, SARを算出
+        print("SDR_mix: {:.3f}, SIR_mix: {:.3f}, SAR_mix: {:.3f}".format(mixed_result[0][0], mixed_result[2][0], mixed_result[3][0]))
+        print("SDR_est: {:.3f}, SIR_est: {:.3f}, SAR_est: {:.3f}".format(reference_result[0][0], reference_result[2][0], reference_result[3][0]))
+
+    else:
+        print("number of audio channels are incorrect")
+
+
 """
 機械学習手法
 """
@@ -157,7 +197,10 @@ class NaiveBayes():
 # サポートベクターマシンによる点群データの分類
 class SupportVectorClassify():
     def __init__(self):
-        self.model = SVC(kernel='linear', C=1E10) # モデルのインスタンスを生成　C：正規化パラメータ
+        # モデルのインスタンスを生成　
+        # C：ソフトマージン用のパラメータ(マージンの中にポイントがどれだけ入れるかを指定する 大きいほど許容数が少なく、小さいほど許容数が多い)
+        self.model = SVC(kernel='linear', C=1E10) # linear:線形分類
+        # self.model = SVC(kernel='rbf', C=1E10) # rbf(radial basis function)：放射基底関数(カーネルトリックを用いたカーネル変換)
 
     def fit(self, X, y):
         self.model.fit(X, y) # モデル学習
@@ -179,12 +222,11 @@ class SupportVectorClassify():
 
         P = self.model.decision_function(xy).reshape(X.shape)
 
-        ax.contour(X, Y, P, colors='k', levels=[-1, 0, 1], alpha=0.5, linestyles=['--', '-', '--']) # 等高線を描画
+        ax.contour(X, Y, P, colors='k', levels=[-1, 0, 1], alpha=0.5, linestyles=['--', '-', '--']) # 決定境界を描画
 
         if plot_support:
-            ax.scatter(self.model.support_vectors_[:, 0],
-                       self.model.support_vectors_[:, 1],
-                       s=300, linewidth=1, facecolors='none', edgecolor='black')
+            ax.scatter(self.model.support_vectors_[:, 0],self.model.support_vectors_[:, 1],
+             s=300, linewidth=1, facecolors='none', edgecolor='black') # サポートベクターを黒丸で囲む
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
 
@@ -197,6 +239,12 @@ class SupportVectorClassify():
 
 # 次元削減(教師なし学習)
 
+"""
+PyTorch用
+"""
+# モデルのパラメータ数をカウント
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 
@@ -234,6 +282,17 @@ def gaussian(x, mean, std):
     plt.ylabel("px")
     plt.show()
 
+# 3次元点群を描画
+def plot_3D(X, y, elev=30, azim=30):
+    r = np.exp(-(X**2).sum(1)) # 中央の点群を中心とする放射基底関数を使用
+    ax = plt.subplot(projection='3d')
+    ax.scatter3D(X[:, 0], X[:, 1], r, c=y, s=50, cmap='autumn')
+    ax.view_init(elev=elev, azim=azim)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('r')
+    plt.show()
+
 if __name__ == "__main__":
     # 図のスタイルを変更
     sns.set()
@@ -248,6 +307,11 @@ if __name__ == "__main__":
     #　三角関数用
     # x = np.arange(-5, 5, 0.1)
     # sin(x)
+
+    # 3次元点群描画用
+    X, y = make_circles(100, factor=.1, noise=.1)
+    plot_3D(X, y)
+
 
     # 線形回帰用
     # x = 10 * np.random.rand(50)
@@ -266,7 +330,7 @@ if __name__ == "__main__":
     # print(predicted_result)
 
     # サポートベクターマシン用
-    X, y = make_blobs(n_samples=50, centers=2, random_state=0, cluster_std=0.60)
-    points_svc = SupportVectorClassify() # モデル初期化
-    points_svc.fit(X, y)
-    points_svc.plot_svc_decision_function(X, y)
+    # X, y = make_blobs(n_samples=50, centers=2, random_state=0, cluster_std=0.60)
+    # points_svc = SupportVectorClassify() # モデル初期化
+    # points_svc.fit(X, y)
+    # points_svc.plot_svc_decision_function(X, y)

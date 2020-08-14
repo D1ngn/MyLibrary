@@ -62,10 +62,6 @@ B = 4×4
 
 
 
-
-
-
-
 #### 音声ファイルの読み込み
 
 ```
@@ -123,15 +119,15 @@ B = 4×4
    >> mixed = mixed.' # 転置
    
    # 評価したい音声(深層学習モデルなどが推定した音声)
-   >> [predicted, Fs] = audioread("predicted.wav"); 
-   >> predicted = predicted.' # 転置
+   >> [estimated, Fs] = audioread("estimated.wav"); 
+   >> estimated = estimated.' # 転置
    
    # 行列Sの作成（１行目：目的音声のデータ, ２行目：別の音源のデータ）
    S = [target;interference]
    
    # 音声の分解
    # 行列Sの1行目が目的の音声のデータなので第２引数に１を指定
-   >> [s_target, e_interf, e_artif] = bss_decomp_gain(predicted, 1, S) # 推定音声を分解
+   >> [s_target, e_interf, e_artif] = bss_decomp_gain(estimated, 1, S) # 推定音声を分解
    ```
 
    

@@ -171,18 +171,31 @@ def audio_eval(audio_length, target_audio_path, interference_audio_path, mixed_a
     if target.ndim == 2:
         mixed_result = bss_eval_sources(reference, mixed) # 混合音声のSDR, SIR, SARを算出
         reference_result = bss_eval_sources(reference, estimated) # モデルが推定した音声のSDR, SIR, SARを算出
-        print("SDR_mix: {:.3f}, SIR_mix: {:.3f}, SAR_mix: {:.3f}".format(mixed_result[0][0], mixed_result[1][0], mixed_result[2][0]))
-        print("SDR_est: {:.3f}, SIR_est: {:.3f}, SAR_est: {:.3f}".format(reference_result[0][0], reference_result[1][0], reference_result[2][0]))
+        # 混合音声の評価結果
+        sdr_mix = mixed_result[0][0]
+        sir_mix = mixed_result[1][0]
+        sar_mix = mixed_result[2][0]
+        # 推定音声の評価結果
+        sdr_est = reference_result[0][0]
+        sir_est = reference_result[1][0]
+        sar_est = reference_result[2][0]
 
     # マルチチャンネル用 (マルチチャンネルの場合音声はshape:[1, num_samples, num_channels]の形式)
     elif target.ndim == 3:
         mixed_result = bss_eval_images(reference, mixed) # 混合音声のSDR, SIR, SARを算出
         reference_result = bss_eval_images(reference, estimated) # モデルが推定した音声のSDR, SIR, SARを算出
-        print("SDR_mix: {:.3f}, SIR_mix: {:.3f}, SAR_mix: {:.3f}".format(mixed_result[0][0], mixed_result[2][0], mixed_result[3][0]))
-        print("SDR_est: {:.3f}, SIR_est: {:.3f}, SAR_est: {:.3f}".format(reference_result[0][0], reference_result[2][0], reference_result[3][0]))
-
+        # 混合音声の評価結果
+        sdr_mix = mixed_result[0][0]
+        sir_mix = mixed_result[2][0]
+        sar_mix = mixed_result[3][0]
+        # 推定音声の評価結果
+        sdr_est = reference_result[0][0]
+        sir_est = reference_result[2][0]
+        sar_est = reference_result[3][0]
     else:
         print("number of audio channels are incorrect")
+
+    return sdr_mix, sir_mix, sar_mix, sdr_est, sir_est, sar_est
 
 
 """

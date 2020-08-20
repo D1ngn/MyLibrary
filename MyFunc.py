@@ -1,7 +1,4 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from mpl_toolkits import mplot3d # 3次元描画用
+import os
 
 # 画像処理用
 import cv2
@@ -10,22 +7,28 @@ from PIL import Image
 # 音声処理用
 import librosa
 import soundfile as sf
-# from .audio_evaluation.separation import bss_eval_sources, bss_eval_images
+import wave
+from scipy import signal
 
 # 機械学習用
+import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+from mpl_toolkits import mplot3d # 3次元描画用
 # データセット
 from sklearn.datasets import make_blobs # クラスタリング用の等方性ガウス点群を生成
 from sklearn.datasets import make_circles # 大きい円と小さい円を描くように２次元の点群を生成
-from sklearn.datasets import fetch_20newsgroups
 # 特徴量エンジニアリング
 from sklearn.feature_extraction.text import TfidfVectorizer
 # データ作成用
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV # データ分割用, グリッドサーチ用
 # モデル
 from sklearn.pipeline import make_pipeline # 複数モデルを連続で実行するためのパイプライン
 from sklearn.linear_model import LinearRegression
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import SVC # Support Vector Classifier
+from sklearn.decomposition import PCA # Principal Component Analysis
 #評価用
 from sklearn.metrics import accuracy_score
 
@@ -68,11 +71,24 @@ def save_audio_file(file_path, data, sampling_rate=16000):
     # librosa.output.write_wav(file_path, data, sampling_rate) # 正常に動作しないので変更
     sf.write(file_path, data, sampling_rate)
 
-# 2つのオーディオデータを足し合わせる
+# 2つの音声データを足し合わせる
 def audio_mixer(data1, data2):
     assert len(data1) == len(data2)
     mixed_audio = data1 + data2
     return mixed_audio
+
+# 片方の音声からもう一方の音声を引く
+def audio_subtracter(data1, data2):
+    assert len(data1) == len(data2)
+    subtracted_audio = data1 - data2
+    return subtracted_audio
+
+# 音声データを指定したサンプリング周波数でリサンプルする
+def audio_resampler(input_data, input_sr, output_sr):
+    output_len = int(len(input_data) * (output_sr / input_sr))
+    resampled_data = signal.resample(input_data, output_len)
+    return resampled_data
+
 
 # 音声データをスペクトログラムに変換する
 def wave_to_spec(data, n_fft, hop_length, win_length):
@@ -83,15 +99,31 @@ def wave_to_spec(data, n_fft, hop_length, win_length):
     # mel_spec = librosa.feature.melspectrogram(data, sr=sr, n_mels=128) # メルスペクトログラムを用いる場合はこっちを使う
     return mag, phase
 
+# スペクトログラムを音声データに変換する
+def spec_to_wav(spec, hop_length):
+    # 逆短時間フーリエ変換(iSTFT)を行い、スペクトログラムから音声データを取得
+    wav_data = librosa.istft(spec, hop_length=hop_length)
+    return wav_data
+
+# スペクトログラムを図にプロットする関数
+def spec_plot(base_dir, wav_path, save_path, audio_length):
+    # soxコマンドによりwavファイルからスペクトログラムの画像を生成
+    cmd1 = "sox {} -n trim 0 {} rate 16.0k spectrogram".format(wav_path, audio_length)
+    subprocess.call(cmd1, shell=True)
+    # 生成されたスペクトログラム画像を移動
+    #(コマンドを実行したディレクトリにスペクトログラムが生成されてしまうため移動)
+    spec_path = os.path.join(base_dir, "spectrogram.png")
+    cmd2 = "mv {} {}".format(spec_path, save_path)
+    subprocess.call(cmd2, shell=True)
+
 # waveファイルを読み込み波形のグラフを保存する
-def wave_plot(input_path, output_path, fig_title=None):
+def wave_plot(input_path, output_path, audio_length, fig_title=None):
     # open wave file
     wf = wave.open(input_path,'r')
 
     # load wave data
-    length = 5 # 読み出すオーディオの長さ[s]
     rate = wf.getframerate()  # サンプリングレート[1/s]
-    chunk_size = rate * length
+    chunk_size = rate * audio_length
     amp  = (2**8) ** wf.getsampwidth() / 2
     data = wf.readframes(chunk_size)   # バイナリ読み込み
     data = np.frombuffer(data,'int16') # intに変換
@@ -104,8 +136,9 @@ def wave_plot(input_path, output_path, fig_title=None):
     # 図に描画
     sns.set() # スタイルをきれいにする
     fig = plt.figure(facecolor='w', linewidth=5, edgecolor='black')
-    # ax = fig.add_subplot(1, 1, 1, ylim=(-0.5, 0.5)) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
-    ax = fig.add_subplot(1, 1, 1, title=fig_title) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
+    # ax = fig.add_subplot(1, 1, 1, title=fig_title) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
+    ax = fig.add_subplot(1, 1, 1, title=fig_title, ylim=(-0.5, 0.5)) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
+    ax.set_xlabel('time[s]') # x軸名を設定
     ax.set_xlabel('time[s]') # x軸名を設定
     ax.set_ylabel('magnitude') # y軸名を設定
     ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(1.0)) # x軸の主目盛を1.0ごとに表示
@@ -233,11 +266,36 @@ class SupportVectorClassify():
         plt.show()
 
 
+# ランダムフォレストによる分類
+
+
+
+
 # クラスタリング(教師なし学習)
 
 
 
 # 次元削減(教師なし学習)
+
+
+
+
+# グリッドサーチによるハイパーパラメータの探索(主成分分析とサポートベクターマシンを用いた顔認識)
+class GridSearch_PCA_SVC():
+    def __init__(self, n_components, param_grid):
+        pca = PCA(n_components=n_components, whiten=True, random_state=42, svd_solver='randomized')
+        svc = SVC(kernel='rbf', class_weight='balanced')
+        self.model = make_pipeline(pca, svc)
+        self.grid = GridSearchCV(self.model, param_grid)
+
+    def fit(self, X, y):
+        self.grid.fit(X, y)
+        print("best_params:", self.grid.best_params_)
+
+    def predict(self, X):
+        result = self.grid.best_estimator_.predict(X)
+        return result
+
 
 """
 PyTorch用
@@ -309,8 +367,8 @@ if __name__ == "__main__":
     # sin(x)
 
     # 3次元点群描画用
-    X, y = make_circles(100, factor=.1, noise=.1)
-    plot_3D(X, y)
+    # X, y = make_circles(100, factor=.1, noise=.1)
+    # plot_3D(X, y)
 
 
     # 線形回帰用
@@ -321,6 +379,7 @@ if __name__ == "__main__":
     # output = linear_regression(X1, X2, y1, y2)
 
     # 多項分布ナイーブベイズに基づくテキストカテゴリ分類用
+    # from sklearn.datasets import fetch_20newsgroups
     # categories = ['talk.religion.misc', 'soc.religion.christian', 'sci.space', 'comp.graphics']
     # train = fetch_20newsgroups(subset='train', categories=categories)　# データ取得
     # test = fetch_20newsgroups(subset='test', categories=categories)　# データ取得
@@ -329,8 +388,26 @@ if __name__ == "__main__":
     # predicted_result = naive_bayes.text_category_classification('sending a payload to the ISS', train.target_names) #　テキスト分類
     # print(predicted_result)
 
-    # サポートベクターマシン用
+    # サポートベクターマシンによる点群分類用
     # X, y = make_blobs(n_samples=50, centers=2, random_state=0, cluster_std=0.60)
     # points_svc = SupportVectorClassify() # モデル初期化
     # points_svc.fit(X, y)
     # points_svc.plot_svc_decision_function(X, y)
+
+    # # グリッドサーチによるハイパーパラメータの探索(主成分分析とサポートベクターマシンを用いた顔認識)用
+    # from sklearn.datasets import fetch_lfw_people
+    # faces = fetch_lfw_people(min_faces_per_person=60)
+    # Xtrain, Xtest, ytrain, ytest = train_test_split(faces.data, faces.target, random_state=42)
+    # n_components = 150 # 主成分分析の次元数
+    # param_grid = {'svc__C': [1, 5, 10, 50], 'svc__gamma': [0.0001, 0.0005, 0.001, 0.005]} # グリッドサーチで最適値を探索するパラメータと範囲を指定
+    # gps = GridSearch_PCA_SVC(n_components, param_grid)
+    # gps.fit(Xtrain, ytrain)
+    # yfit = gps.predict(Xtest)
+    # # print(yfit)
+    # fig, ax = plt.subplots(4, 6)
+    # for i, axi in enumerate(ax.flat):
+    #     axi.imshow(Xtest[i].reshape(62, 47), cmap='bone')
+    #     axi.set(xticks=[], yticks=[])
+    #     axi.set_ylabel(faces.target_names[yfit[i]].split()[-1], color='black' if yfit[i] == ytest[i] else 'red')
+    # fig.suptitle('Predicted Names; Incorrect Labels in Red', size=14)
+    # plt.show()

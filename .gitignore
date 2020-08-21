@@ -3,3 +3,4 @@ multichannel-unet-bss/
 open_pose/
 realtime_sound_processing/
 semantic_segmentation/
+.vector_cache/

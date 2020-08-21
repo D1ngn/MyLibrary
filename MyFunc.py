@@ -14,7 +14,6 @@ from scipy import signal
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import seaborn as sns
 from mpl_toolkits import mplot3d # 3次元描画用
 # データセット
 from sklearn.datasets import make_blobs # クラスタリング用の等方性ガウス点群を生成
@@ -313,12 +312,19 @@ class GridSearch_PCA_SVC():
 自然言語処理用
 """
 # Mecabを用いた形態素解析(Morphological Analysis)
-def make_wakati(sentence):
-    tagger = MeCab.Tagger("-Owakati")
-    sentence = tagger.parse(sentence)
-    sentence = re.sub(r'[0-9０-９a-zA-Zａ-ｚＡ-Ｚ]+', " ", sentence)
-    sentence = re.sub(r'[\．_－―─！＠＃＄％＾＆\-‐|\\＊\“（）＿■×+α※÷⇒—●★☆〇◎◆▼◇△□(：〜～＋=)／*&^%$#@!~`){}［］…\[\]\"\'\”\’:;<>?＜＞〔〕〈〉？、。・,\./『』【】「」→←○《》≪≫\n\u3000]+', "", sentence)
-    wakati = sentence.split(" ")
+def mecab_wakati(text):
+    import MeCab
+    import re
+    # MeCabで分かち書き　-dに辞書を指定
+    tagger = MeCab.Tagger("-Owakati -d /usr/lib/x86_64-linux-gnu/mecab/dic/mecab-ipadic-neologd")
+    text = tagger.parse(text)
+    # 半角全角英数字除去
+    text = re.sub(r'[0-9０-９a-zA-Zａ-ｚＡ-Ｚ]+', " ", text)
+    # 記号もろもろ除去
+    text = re.sub(r'[\．_－―─！＠＃＄％＾＆\-‐|\\＊\“（）＿■×+α※÷⇒—●★☆〇◎◆▼◇△□(：〜～＋=)／*&^%$#@!~`){}［］…\[\]\"\'\”\’:;<>?＜＞〔〕〈〉？、。・,\./『』【】「」→←○《》≪≫\n\u3000]+', "", text)
+    # スペースで区切って形態素の配列へ
+    wakati = text.split(" ")
+    # 空の要素は削除
     wakati = list(filter(("").__ne__, wakati))
     return wakati
 
@@ -326,17 +332,8 @@ def make_wakati(sentence):
 def Janome_wakati(text):
     from janome.tokenizer import Tokenizer
     tagger = Tokenizer()
-    print(tagger.tokenize(text))
-
-    # return morpheme
-
-
-"""
-PyTorch用
-"""
-# モデルのパラメータ数をカウント
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    wakati = [tok for tok in tagger.tokenize(text, wakati=True)]
+    return wakati
 
 
 
@@ -387,6 +384,7 @@ def plot_3D(X, y, elev=30, azim=30):
 
 if __name__ == "__main__":
     # 図のスタイルを変更
+    import seaborn as sns
     sns.set()
 
     # ガウス分布用
@@ -449,3 +447,8 @@ if __name__ == "__main__":
     # Janomeを用いた形態素解析用
     # text = "機械学習が好きです。"
     # Janomewakati(text)
+
+    # Mecabを用いた形態素解析用
+    text = "【人工知能】は「人間」の仕事を奪った"
+    wakati = mecab_wakati(text)
+    # print(wakati)

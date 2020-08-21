@@ -309,6 +309,27 @@ class GridSearch_PCA_SVC():
         result = self.grid.best_estimator_.predict(X)
         return result
 
+"""
+自然言語処理用
+"""
+# Mecabを用いた形態素解析(Morphological Analysis)
+def make_wakati(sentence):
+    tagger = MeCab.Tagger("-Owakati")
+    sentence = tagger.parse(sentence)
+    sentence = re.sub(r'[0-9０-９a-zA-Zａ-ｚＡ-Ｚ]+', " ", sentence)
+    sentence = re.sub(r'[\．_－―─！＠＃＄％＾＆\-‐|\\＊\“（）＿■×+α※÷⇒—●★☆〇◎◆▼◇△□(：〜～＋=)／*&^%$#@!~`){}［］…\[\]\"\'\”\’:;<>?＜＞〔〕〈〉？、。・,\./『』【】「」→←○《》≪≫\n\u3000]+', "", sentence)
+    wakati = sentence.split(" ")
+    wakati = list(filter(("").__ne__, wakati))
+    return wakati
+
+# Janomeを用いた形態素解析(Morphological Analysis)
+def Janome_wakati(text):
+    from janome.tokenizer import Tokenizer
+    tagger = Tokenizer()
+    print(tagger.tokenize(text))
+
+    # return morpheme
+
 
 """
 PyTorch用
@@ -424,3 +445,7 @@ if __name__ == "__main__":
     #     axi.set_ylabel(faces.target_names[yfit[i]].split()[-1], color='black' if yfit[i] == ytest[i] else 'red')
     # fig.suptitle('Predicted Names; Incorrect Labels in Red', size=14)
     # plt.show()
+
+    # Janomeを用いた形態素解析用
+    # text = "機械学習が好きです。"
+    # Janomewakati(text)

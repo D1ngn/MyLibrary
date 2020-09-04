@@ -14,6 +14,37 @@ PyTorch用
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+# 既存のチェックポイントファイルをロード
+def load_checkpoint(model, optimizer, checkpoint_path, device):
+    # チェックポイントファイルがない場合エラー
+    assert os.path.isfile(checkpoint_path)
+    # チェックポイントファイルをロード
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    start_epoch = checkpoint['epoch']
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    log_epoch = checkpoint['log_epoch']
+    print("{}からデータをロードしました。エポック{}から学習を再開します。".format(checkpoint_path, start_epoch))
+    return start_epoch, model, optimizer, log_epoch
+
+# モデルの重みを部分的にロード
+def load_partial_param(model, pretrained_path):
+    checkpoint = torch.load(pretrained_path)
+    pretrained_param = checkpoint['model_state_dict']
+    removed_layer_list = ['you_want_remove_layer_name']
+    for removed_layer in removed_layer_list:
+        pretrained_param = {k: v for k, v in pretrained_partial_param.items() if removed_layer not in k}
+    state_dict = model.state_dict()
+    for k, v in pretrained_param.items():
+        state_dict.update({k: v})
+    model.load_state_dict(state_dict)
+
+# モデルの一部の重みをフリーズ
+def freeze_param(model):
+    for name, param in model.named_parameters():
+        if 'param_name' in name:
+            param.requires_grad = False
+
 
 
 def train(model, dataloaders_dict, criterion, optimizer, num_epochs):

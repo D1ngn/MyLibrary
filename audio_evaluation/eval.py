@@ -65,15 +65,20 @@ if __name__ == "__main__":
     audio_length = 5
 
     # 目的音
-    target_audio_path = "./sample_audio/target_voice.wav"
+    # target_audio_path = "./sample_audio/target_voice.wav"
+    target_audio_path = "../../AudioDatasets/NoisySpeechDetabase/clean_testset_wav_16kHz/p232_013.wav"
     # target_audio_path = "./sample_audio_multi/shokudo_rec1_split_0.wav" # マルチチャンネルテスト用
     # 外的雑音
-    interference_audio_path = "./sample_audio/interference_audio.wav"
+    # interference_audio_path = "./sample_audio/interference_audio.wav"
+    interference_audio_path = "../../AudioDatasets/NoisySpeechDetabase/interference_testset_wav_16kHz/p232_013.wav"
     # interference_audio_path = "./sample_audio_multi/shokudo_rec1_split_1.wav" # マルチチャンネルテスト用
-    # モデルが推定した音声
-    estimated_audio_path = "./sample_audio/predicted_voice.wav"
-    # estimated_audio_path = "./sample_audio_multi/shokudo_rec1_split_2.wav" # マルチチャンネルテスト用
     # 混合音
-    mixed_audio_path = "./sample_audio/mixed_audio.wav"
+    # mixed_audio_path = "./sample_audio/mixed_audio.wav"
+    mixed_audio_path = "../../AudioDatasets/NoisySpeechDetabase/noisy_testset_wav_16kHz/p232_013.wav"
     # mixed_audio_path = "./sample_audio_multi/shokudo_rec1_split_3.wav" # マルチチャンネルテスト用
+    # モデルが推定した音声
+    # estimated_audio_path = "./sample_audio/predicted_voice.wav"
+    estimated_audio_path = "../../speech_denoising_DCUnet/test0822/test_RefineSpectrogramUnet_0822.wav"
+    # estimated_audio_path = "./sample_audio_multi/shokudo_rec1_split_2.wav" # マルチチャンネルテスト用
+
     audio_eval(audio_length, target_audio_path, interference_audio_path, mixed_audio_path, estimated_audio_path)

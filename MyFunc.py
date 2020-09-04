@@ -14,6 +14,7 @@ from scipy import signal
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import seaborn as sns
 from mpl_toolkits import mplot3d # 3次元描画用
 # データセット
 from sklearn.datasets import make_blobs # クラスタリング用の等方性ガウス点群を生成
@@ -196,6 +197,95 @@ def audio_eval(audio_length, target_audio_path, interference_audio_path, mixed_a
 
     return sdr_mix, sir_mix, sar_mix, sdr_est, sir_est, sar_est
 
+# 振幅スペクトログラム、位相差スペクトログラム、ログメルスペクトログラムを算出
+class SpectrogramFeatures():
+    # def __init__(self, args=None, wav=None, center=None, config=None):
+    def __init__(self, wav=None, center=False, sampling_rate=16000, fft_size=512, hop_length=160):
+        # self.args = args
+        self.wav = wav
+        self.center = center
+        self.sampling_rate = sampling_rate
+        self.fft_size = fft_size
+        self.hop_length = hop_length
+        self.wav_base_channel = 0 # 位相差スペクトログラムを算出する際の基準となる音声チャンネル（0チャンネル目を基準）
+        self.num_mels = 64
+
+        self.sin_window = np.zeros(self.fft_size)
+        # 160であっているのか不明
+        self.window_length4critical_sampling = 160 * int(np.floor(self.fft_size / 160))
+        for i in range(self.window_length4critical_sampling):
+            self.sin_window[i] = np.sin(np.pi * i / (self.window_length4critical_sampling - 1))
+
+        self.wav_ch = self.wav.shape[1]
+        # 1ch目の音声をテンプレートとして取り出し、短時間フーリエ変換
+        wav_c_contiguous_template = np.require(self.wav[:, 0], dtype=np.float32, requirements=['C'])
+        spec_template = librosa.core.stft(wav_c_contiguous_template, n_fft=self.fft_size, hop_length=self.hop_length, \
+        center=self.center, window=self.sin_window) # used for num_frame
+        self.num_bin = int(fft_size / 2) + 1 # 周波数ビンの数
+        self.num_frame = spec_template.shape[1] # フレームの数
+        self.complex_spec = np.ones((self.wav_ch, self.num_bin, self.num_frame), dtype='complex64')
+
+        self.complex_spec[0] = spec_template
+        # 複数チャンネルの音声をスペクトログラム（振幅＋位相）に変換
+        for i in range(1, self.wav_ch):
+            wav_c_contiguous = np.require(self.wav[:, i], dtype=np.float32, requirements=['C'])
+            self.complex_spec[i] = librosa.core.stft(wav_c_contiguous, n_fft=self.fft_size, hop_length=self.hop_length, \
+            center=self.center, window=self.sin_window)
+
+    # 振幅スペクトログラムを算出
+    def amplitude(self):
+        self.amp = np.zeros((self.wav_ch, self.num_bin, self.num_frame), dtype='float32')
+
+        for i in range(self.wav_ch):
+            self.amp[i] = np.abs(self.complex_spec[i])
+        """self.amp: (channels, freq_bin, time_steps)"""
+        return self.amp
+
+    # 位相差スペクトログラムを算出（マルチチャンネル音声間の位相差）
+    def phasediff(self):
+        self.phasediff = np.zeros((self.wav_ch - 1, self.num_bin, self.num_frame), dtype='float32')
+
+        spec_base_angle = np.angle(self.complex_spec[self.wav_base_channel]) # 基準チャンネルの偏角
+        channel_num_list = np.delete(np.arange(self.wav_ch), self.wav_base_channel) # 基準チャンネル以外のチャンネル番号リスト
+        # 各チャンネルの音声の基準チャンネルのからの位相差（偏角）を算出
+        for idx, channnel_num in enumerate(channel_num_list):
+            spec_angle = np.angle(self.complex_spec[channnel_num]) - spec_base_angle
+            spec_angle[spec_angle < 0] += 2 * np.pi
+            self.phasediff[idx] = spec_angle
+
+        return self.phasediff
+
+    # ログメルスペクトログラムを算出
+    def log_mel_spec(self):
+        mel_fb = librosa.filters.mel(self.sampling_rate, self.fft_size, n_mels=self.num_mels)
+        self.log_mel_spec = np.ones((self.wav_ch, self._num_mels, self.frame_num), dtype='float32')
+
+        for i in range(self.wav_ch):
+            power_spec = np.abs(self.complex_spec[i]) ** 2 # パワースペクトログラムを算出
+            mel_power_spec = np.dot(mel_fb, power_spec)
+            self.log_mel_spec[i] = 10.0 * np.log10(np.maximum(1e-10, mel_power_spec)) # logがマイナス無限にならないように対数変換
+
+        return self.log_mel_spec
+
+    # GCC-PHAT
+    def nCr(self, n, r):
+        import math
+        return math.factorial(n) // math.factorial(r) // math.factorial(n-r)
+
+    def gcc_phat(self):
+        gcc_channels = self.nCr(self.wav_ch, 2)
+        self.gcc_feat = np.zeros((gcc_channels, n_mels, self.num_frame))
+
+        cnt = 0
+        for m in range(self.wav_ch):
+            for n in range(m + 1, self.wav_ch):
+                R = np.conj(self.complex_spec[m, :, :]) * self.complex_spec[n, :, :]
+                cc = np.fft.irfft(np.exp(1.j * np.angle(R)), axis=0)
+                cc = np.concatenate((cc[-n_mels // 2:, :], cc[:n_mels // 2, :]), axis=0)
+                self.gcc_feat[cnt, :, :] = cc
+                cnt += 1
+
+        return self.gcc_phat
 
 """
 機械学習手法
@@ -384,7 +474,6 @@ def plot_3D(X, y, elev=30, azim=30):
 
 if __name__ == "__main__":
     # 図のスタイルを変更
-    import seaborn as sns
     sns.set()
 
     # ガウス分布用
@@ -449,6 +538,15 @@ if __name__ == "__main__":
     # Janomewakati(text)
 
     # Mecabを用いた形態素解析用
-    text = "【人工知能】は「人間」の仕事を奪った"
-    wakati = mecab_wakati(text)
+    # text = "【人工知能】は「人間」の仕事を奪った"
+    # wakati = mecab_wakati(text)
     # print(wakati)
+
+    # Spectrogram特徴量の抽出用
+    wav_path = "../speech_denoising_MCDUnet/data/shokudo_noise/shokudo_rec1_split_3_sec/shokudo_rec1_split_0.wav"
+    wav = load_audio_file(wav_path, length=3)
+    spec = SpectrogramFeatures(wav)
+    amp_spec = spec.amplitude()
+    phasediff_spec = spec.phasediff()
+    print(amp_spec.shape)
+    print(phasediff_spec.shape)

@@ -489,6 +489,20 @@ def fig_plot(x, y, x_scale=1.0, y_scale=0.10, ylim_min=-0.5, ylim_max=0.5, fig_t
     # file_name = os.path.basename(output_path).split('.')[0] # データの名前を設定
     # fig.savefig(output_path) # グラフを保存
 
+# 混同行列の作成
+def mk_confusion_matrix(label, predicted):
+    """
+    label: true label of data
+    predicted: predicted result of data
+    """
+    from sklearn.metrics import confusion_matrix
+    matrix = confusion_matrix(label, predicted)
+
+    sns.heatmap(matrix, square=True, annot=True, cbar=False, cmap='RdPu')
+    plt.xlabel('predicted value')
+    plt.ylabel('true value')
+    plt.show()
+
 
 # 正弦波(sin関数)を描画
 def sin(x):
@@ -608,6 +622,11 @@ if __name__ == "__main__":
     # projected: (n_samples=1797, n_features=2)
     # """
     # pca.cal_cumulative_contribuntion_rate(digits.data) # 累積寄与率の表示（n_componentsの最適数を定めるため）
+
+    # # 混同行列描画用
+    # label = [1, 2, 3, 4, 5, 6, 7, 8]
+    # predicted = [1, 3, 3, 5, 5, 8, 7, 6]
+    # mk_confusion_matrix(label, predicted)
 
     # Janomeを用いた形態素解析用
     # text = "機械学習が好きです。"

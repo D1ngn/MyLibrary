@@ -53,6 +53,7 @@ import collections
 import itertools
 import warnings
 from . import util
+# import util
 
 
 # The maximum allowable number of sources (prevents insane computational load)

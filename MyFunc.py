@@ -71,6 +71,24 @@ def save_audio_file(file_path, data, sampling_rate=16000):
     # librosa.output.write_wav(file_path, data, sampling_rate) # 正常に動作しないので変更
     sf.write(file_path, data, sampling_rate)
 
+# 音声ファイルを再生
+def play_audio(data, sampling_rate):
+    # dataを再生する
+    sd.play(data, sampling_rate)
+    print("start")
+    # 再生が終わるまで待つ
+    status = sd.wait()
+    print("finish")
+
+# 音声を録音
+def rec_audio(audio_length, sampling_rate, channels, save_path):
+    print("start recording...")
+    data = sd.rec(int(audio_length*sampling_rate), sampling_rate, channels=channels)
+    # 録音が終わるまで待つ
+    sd.wait()
+    print("finish recording!")
+    save_audio_file(save_path, data, sampling_rate)
+
 # 2つの音声データを足し合わせる
 def audio_mixer(data1, data2):
     assert len(data1) == len(data2)
@@ -91,11 +109,11 @@ def audio_resampler(input_data, input_sr, output_sr):
 
 
 # 音声データをスペクトログラムに変換する
-def wave_to_spec(data, n_fft, hop_length, win_length):
+def wave_to_spec(data, n_fft, hop_length, win_length=None):
     # 短時間フーリエ変換(STFT)を行い、スペクトログラムを取得
     spec = librosa.stft(data, n_fft=n_fft, hop_length=hop_length, win_length=win_length)
     mag = np.abs(spec) # 振幅スペクトログラムを取得
-    phase = np.exp(1.j * np.angle(spec)) # 位相スペクトログラムを取得(フェーザ表示)
+    phase = np.exp(1j * np.angle(spec)) # 位相スペクトログラムを取得(フェーザ表示)
     # mel_spec = librosa.feature.melspectrogram(data, sr=sr, n_mels=128) # メルスペクトログラムを用いる場合はこっちを使う
     return mag, phase
 
@@ -117,7 +135,7 @@ def spec_plot(base_dir, wav_path, save_path, audio_length):
     subprocess.call(cmd2, shell=True)
 
 # waveファイルを読み込み波形のグラフを保存する
-def wave_plot(input_path, output_path, audio_length, fig_title=None):
+def wave_plot(input_path, output_path, audio_length, fig_title=None, x_scale=1.0, y_scale=0.10, ylim_min=-0.5, ylim_max=0.5):
     # open wave file
     wf = wave.open(input_path,'r')
 
@@ -137,12 +155,11 @@ def wave_plot(input_path, output_path, audio_length, fig_title=None):
     sns.set() # スタイルをきれいにする
     fig = plt.figure(facecolor='w', linewidth=5, edgecolor='black')
     # ax = fig.add_subplot(1, 1, 1, title=fig_title) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
-    ax = fig.add_subplot(1, 1, 1, title=fig_title, ylim=(-0.5, 0.5)) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
-    ax.set_xlabel('time[s]') # x軸名を設定
+    ax = fig.add_subplot(1, 1, 1, title=fig_title, ylim=(ylim_min, ylim_max)) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
     ax.set_xlabel('time[s]') # x軸名を設定
     ax.set_ylabel('magnitude') # y軸名を設定
-    ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(1.0)) # x軸の主目盛を1.0ごとに表示
-    ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(0.10)) # y軸の主目盛を0.10ごとに表示
+    ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(x_scale)) # x軸の主目盛を1.0ごとに表示
+    ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(y_scale)) # y軸の主目盛を0.10ごとに表示
     file_name = os.path.basename(output_path).split('.')[0] # データの名前を設定
     ax.plot(x, data, label='{}'.format(file_name)) # データをプロット
     ax.legend(edgecolor="black") # 凡例を追加
@@ -378,8 +395,26 @@ class SupportVectorClassify():
 
 
 # 次元削減(教師なし学習)
+class DimReductionPCA():
+    def __init__(self, n_components):
+        """
+        n_components: Number of components
+        """
+        self.model = PCA(n_components)
 
+    def fit(self, X):
+        self.model.fit(X)
 
+    def cal_cumulative_contribuntion_rate(self, X):
+        """
+        データを記述するのに必要は成分数を推定するために
+        成分数に対する累積寄与率を表示
+        """
+        pca = PCA().fit(X)
+        plt.plot(np.cumsum(pca.explained_variance_ratio_))
+        plt.xlabel('number of components')
+        plt.ylabel('cumulative explained variance')
+        plt.show()
 
 
 # グリッドサーチによるハイパーパラメータの探索(主成分分析とサポートベクターマシンを用いた顔認識)
@@ -437,6 +472,24 @@ def Janome_wakati(text):
 """
 図に各関数のグラフをプロット
 """
+# 任意のグラフを表示する
+def fig_plot(x, y, x_scale=1.0, y_scale=0.10, ylim_min=-0.5, ylim_max=0.5, fig_title=None, x_label_name='x', y_label_name='y'):
+    # 図に描画
+    sns.set() # スタイルをきれいにする
+    fig = plt.figure(facecolor='w', linewidth=1, edgecolor='black')
+    # ax = fig.add_subplot(1, 1, 1, title=fig_title) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
+    ax = fig.add_subplot(1, 1, 1, title=fig_title, ylim=(ylim_min, ylim_max)) # 図を1行目1列の1番目に表示(図を1つしか表示しない場合)
+    ax.set_xlabel(x_label_name) # x軸名を設定
+    ax.set_ylabel(y_label_name) # y軸名を設定
+    ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(x_scale)) # x軸の主目盛を1.0ごとに表示
+    ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(y_scale)) # y軸の主目盛を0.10ごとに表示
+    ax.scatter(x, y) # データをプロット
+    plt.show()
+    # ax.legend(edgecolor="black") # 凡例を追加
+    # file_name = os.path.basename(output_path).split('.')[0] # データの名前を設定
+    # fig.savefig(output_path) # グラフを保存
+
+
 # 正弦波(sin関数)を描画
 def sin(x):
     """
@@ -533,6 +586,29 @@ if __name__ == "__main__":
     # fig.suptitle('Predicted Names; Incorrect Labels in Red', size=14)
     # plt.show()
 
+    # # 主成分分析による次元削減
+    # # ランダムな点群
+    # n_components = 2
+    # rng = np.random.RandomState(1)
+    # X = np.dot(rng.rand(2, 2), rng.randn(2, 200)).T
+    # pca = DimReductionPCA(n_components=n_components)
+    # pca.fit(X) # 学習（次元削減）
+    # print(pca.model.components_) # 各成分のベクトル
+    # print(pca.model.explained_variance_) # 各成分の寄与率
+    # fig_plot(X[:, 0], X[:, 1])
+    # # 手書き数字画像
+    # from sklearn.datasets import load_digits
+    # digits = load_digits()
+    # """
+    # digits: (n_samples=1797, n_features=64)
+    # """
+    # pca = DimReductionPCA(n_components=2)
+    # projected = pca.model.fit_transform(digits.data) # 次元削減
+    # """
+    # projected: (n_samples=1797, n_features=2)
+    # """
+    # pca.cal_cumulative_contribuntion_rate(digits.data) # 累積寄与率の表示（n_componentsの最適数を定めるため）
+
     # Janomeを用いた形態素解析用
     # text = "機械学習が好きです。"
     # Janomewakati(text)
@@ -542,11 +618,53 @@ if __name__ == "__main__":
     # wakati = mecab_wakati(text)
     # print(wakati)
 
-    # Spectrogram特徴量の抽出用
-    wav_path = "../speech_denoising_MCDUnet/data/shokudo_noise/shokudo_rec1_split_3_sec/shokudo_rec1_split_0.wav"
-    wav = load_audio_file(wav_path, length=3)
-    spec = SpectrogramFeatures(wav)
-    amp_spec = spec.amplitude()
-    phasediff_spec = spec.phasediff()
-    print(amp_spec.shape)
-    print(phasediff_spec.shape)
+    # # Spectrogram特徴量の抽出用
+    # wav_path = "../speech_denoising_MCDUnet/data/shokudo_noise/shokudo_rec1_split_3_sec/shokudo_rec1_split_0.wav"
+    # wav = load_audio_file(wav_path, length=3)
+    # spec = SpectrogramFeatures(wav)
+    # amp_spec = spec.amplitude()
+    # phasediff_spec = spec.phasediff()
+    # print(amp_spec.shape)
+    # print(phasediff_spec.shape)
+
+    # # 音声ファイル再生用
+    # import sounddevice as sd
+    # file_path = "../AudioDatasets/NoisySpeechDetabase/clean_trainset_28spk_wav_16kHz/p226_001.wav"
+    # audio_length = 3
+    # sampling_rate = 16000
+    # data = load_audio_file(file_path, audio_length, sampling_rate)
+    # play_audio(data, sampling_rate)
+
+    # # 音声録音用
+    # import sounddevice as sd
+    # audio_length = 30
+    # sampling_rate = 16000
+    # channels = 1
+    # save_path = "./robot_self_noise.wav"
+    # rec_audio(audio_length, sampling_rate, channels, save_path)
+
+    # file_path = "./test/target_voice.wav"
+    # save_path = "./test/istft.wav"
+    # audio_length = 3
+    # sampling_rate = 16000
+    # n_fft=1024
+    # hop_length=768
+    # audio_data = load_audio_file(file_path, audio_length, sampling_rate)
+    # mag, phase = wave_to_spec(audio_data, n_fft, hop_length)
+    # target_spec = mag * phase
+    # istft_data = spec_to_wav(target_spec, hop_length)
+    # save_audio_file(save_path, istft_data, sampling_rate)
+
+    # fft_size = 1024
+    # hop_length = 768
+    # file_path = "../AudioDatasets/NoisySpeechDetabase/clean_trainset_28spk_wav_16kHz/p226_001.wav"
+    # audio_length = 3
+    # sampling_rate = 16000
+    # audio_data = load_audio_file(file_path, audio_length, sampling_rate)
+    # amp, phase = wave_to_spec(audio_data, fft_size, hop_length, win_length=None)
+    # print(amp.shape)
+
+    # input_path = "../AudioDatasets/DEMAND/Multichannel_noise_at_LIVING/ch01.wav"
+    # output_path = "./test.png"
+    # audio_length = 30
+    # wave_plot(input_path, output_path, audio_length, fig_title=None, ylim_min=-0.01, ylim_max=0.01)

@@ -108,7 +108,6 @@ class SupportVectorClassify():
 
 
 
-
 # クラスタリング(教師なし学習)
 
 
@@ -310,3 +309,29 @@ if __name__ == "__main__":
     # label = [1, 2, 3, 4, 5, 6, 7, 8]
     # predicted = [1, 3, 3, 5, 5, 8, 7, 6]
     # mk_confusion_matrix(label, predicted)
+
+    #　ランダムフォレストによる回帰
+    from sklearn.ensemble import RandomForestRegressor
+    x = 10 * np.random.rand(200)
+    def sin_model(x, sigma=0.2):
+        """大きな波＋小さな波＋ノイズからなるダミーデータ"""
+        noise = sigma * np.random.randn(len(x))
+        return np.sin(5 * x) + np.sin(0.5 * x) + noise
+    y = sin_model(x)
+    plt.figure(figsize=(16,8))
+    plt.errorbar(x, y, 0.1, fmt='o') # 元のデータをプロット
+    plt.show()
+    # 確認用に0〜10の1000個のデータを用意
+    xfit = np.linspace(0, 10, 1000)
+    # ランダムフォレスト実行
+    rfr = RandomForestRegressor(100)  # インスタンスの生成　木の数を100個に指定
+    rfr.fit(x[:, None], y) # モデルをデータに適合　x:(n_samples) → x[:, None]:(n_samples, n_features=1)
+    yfit = rfr.predict(xfit[:, None])
+    # 結果比較用に実際の値を取得。
+    ytrue = sin_model(xfit,0) # xfitを波発生関数に食わせて、その結果を取得
+    # 結果確認
+    plt.figure(figsize = (16,8))
+    plt.errorbar(x, y, 0.1, fmt='o')
+    plt.plot(xfit, yfit, '-r')                # 予測値のplot（赤）
+    plt.plot(xfit, ytrue, '-k', alpha = 0.5)  # 正解値のplot（黒）
+    plt.show()

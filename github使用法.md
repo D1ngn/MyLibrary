@@ -29,7 +29,7 @@
 
    「Hi (account名)! You've successfully authenticated, but GitHub does not provide shell access.」と返ってきたら成功
 
-4. GitHubと実際にやりとりするときにID・パスワードを聞かれるときssh接続がうまくいっていないので、
+4. GitHubと実際にやりとりするときにID・パスワードを聞かれるときや、`remote: Permission to [ユーザID]/[リポジトリ].git denied to D1-ngn.ssh`といったエラーが出るときは接続がうまくいっていないので、
 
    ```
    $ git config remote.origin.url

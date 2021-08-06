@@ -37,6 +37,8 @@
   $ make -j4
   （下記lsコマンドで確認）
   $ ls -l julius/julius
+  （以下のコマンドを実行することでどのディレクトリからもjuliusコマンドを実行できるようになる）
+  $ sudo make install
   ```
 
 - dictationキットのインストール

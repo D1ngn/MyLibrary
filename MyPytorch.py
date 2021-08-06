@@ -10,9 +10,25 @@ import torchtext
 """
 PyTorch用
 """
+# データを標準化（平均0、分散1に正規化（Z-score normalization））
+def standardize(self, data):
+    data_mean = data.mean()
+    data_std = data.std(unbiased=False) # 母集団の標準偏差（標本標準偏差を使用する場合はunbiased=True）
+    standardized_data = (data - data_mean) / data_std
+    return standardized_data
+
 # モデルのパラメータ数をカウント
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+# 層の重みをxavierの重みで初期化
+def init_weights(layer):
+    # 全結合層または畳み込み層の場合
+    if isinstance(layer, (nn.Linear, nn.Conv2d)):
+        nn.init.xavier_normal_(layer.weight) # xavierの重みで初期化
+        # バイアスがある場合
+        if layer.bias is not None:
+            layer.bias.data.fill_(0.0) # 0.0で初期化
 
 # 既存のチェックポイントファイルをロード
 def load_checkpoint(model, optimizer, checkpoint_path, device):
@@ -46,7 +62,7 @@ def freeze_param(model):
             param.requires_grad = False
 
 
-
+# モデルの学習コマンド（テンプレート）
 def train(model, dataloaders_dict, criterion, optimizer, num_epochs):
 
     # GPUが使えるかを確認
@@ -131,7 +147,7 @@ class LstmTextClassify(nn.Module):
         # self.embedding = nn.Embedding(seq_len, embedding_dim)
         # word2vecやfasttextで学習済みのembeddingを使用する場合は以下を使用 freeze=Trueにより、誤差逆伝播で更新されなくなる
         self.embedding = nn.Embedding.from_pretrained(embeddings=text_embedding_vecors, freeze=True)
-        # LSTMの隠れ層を定義　batch_first=Trueで入力を[batch, seq_len, embedding_dim]の形に
+        # LSTMの隠れ層を定義 batch_first=Trueで入力を[batch, seq_len, embedding_dim]の形に
         self.lstm = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)
         # LSTMの出力を受け取って全結合するLinearを定義
         self.linear = nn.Linear(hidden_dim, target_size)
@@ -143,7 +159,7 @@ class LstmTextClassify(nn.Module):
 
         # 入力した単語ID列(sequence)をベクトル化する
         embeds = self.embedding(sequence) # [batch, seq_len, embedding_dim]
-        # LSTMの出力　hn_allは全隠れ層の出力, hnは最後の隠れ層の出力、cnは最後の隠れ層セルの値
+        # LSTMの出力 hn_allは全隠れ層の出力, hnは最後の隠れ層の出力、cnは最後の隠れ層セルの値
         hn_all, (hn, cn) = self.lstm(embeds) # hn_all:[batch, seq_len, hidden_dim], hn,cn:[1, batch, hidden_dim]
         # LSTMの出力を受け取って全結合する(最終層の出力だけ使用するので-1を指定)
         linear_output = self.linear(hn_all[:, -1, :]) # [batch, hidden_dim] → [batch, target_size]

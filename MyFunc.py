@@ -2,13 +2,14 @@ import os
 import subprocess
 
 # 画像処理用
-import cv2
-from PIL import Image
+# import cv2
+# from PIL import Image
 
 # 音声処理用
 import librosa
 import soundfile as sf
 import wave
+import sounddevice as sd
 from scipy import signal
 
 # 機械学習用
@@ -20,17 +21,29 @@ from mpl_toolkits import mplot3d # 3次元描画用
 
 
 """
-画像処理
+データ処理
 """
+# 正規化処理
+# データを標準化（平均0、分散1に正規化（Z-score Normalization））
+def standardize(data):
+    data_mean = data.mean(keepdims=True)
+    data_std = data.std(keepdims=True, ddof=0) # 母集団の標準偏差（標本標準偏差を使用する場合はddof=1）
+    standardized_data = (data - data_mean) / data_std
+    return standardized_data
 
 
-
+# 最小値0、最大値1に正規化(Min-Max Normalization)
+def min_max_normalize(data):
+    data_min = data.min(keepdims=True)
+    data_max = data.max(keepdims=True)
+    normalized_data = (data - data_min) / (data_max - data_min)
+    return normalized_data
 
 """
 音声処理
 """
 # 音声データをロードし、指定された秒数とサンプリングレートでリサンプル
-def load_audio_file(file_path, length, sample_rate=16000):
+def load_audio_file(file_path, length, sample_rate):
     data, sr = sf.read(file_path)
     # データが設定値よりも大きい場合は大きさを超えた分をカットする
     # データが設定値よりも小さい場合はデータの後ろを0でパディングする
@@ -54,7 +67,7 @@ def load_audio_file(file_path, length, sample_rate=16000):
 
 # 音声データを指定したサンプリングレートで保存
 def save_audio_file(file_path, data, sample_rate=16000):
-    # librosa.output.write_wav(file_path, data, sample_rate) # 正常に動作しないので変更
+    """"data: (num_samples, num_channels)"""
     sf.write(file_path, data, sample_rate)
 
 # 音声ファイルを再生
@@ -94,38 +107,50 @@ def audio_resampler(input_data, input_sr, output_sr):
     return resampled_data
 
 
-# 音声データをスペクトログラムに変換する
-def wave_to_spec(data, n_fft, hop_length, win_length=None):
+# 音声データを振幅スペクトログラムと位相スペクトログラムに変換する
+def wave_to_spec(data, fft_size, hop_length, win_length=None):
     # 短時間フーリエ変換(STFT)を行い、スペクトログラムを取得
-    spec = librosa.stft(data, n_fft=n_fft, hop_length=hop_length, win_length=win_length)
-    amp = np.abs(spec) # 振幅スペクトログラムを取得
-    phase = np.exp(1j * np.angle(spec)) # 位相スペクトログラムを取得(フェーザ表示)
-    # mel_spec = librosa.feature.melspectrogram(data, sr=sr, n_mels=128) # メルスペクトログラムを用いる場合はこっちを使う
-    return amp, phase
+    complex_spec = librosa.stft(data, n_fft=fft_size, hop_length=hop_length, win_length=win_length, window='hann')
+    amp_spec = np.abs(complex_spec) # 振幅スペクトログラムを取得
+    phase_spec = np.exp(1j * np.angle(complex_spec)) # 位相スペクトログラムを取得(フェーザ表示)
+    return amp_spec, phase_spec
 
 # マルチチャンネルの音声データをスペクトログラムに変換する
-def wave_to_spec_multi(data, sample_rate, fft_size):
+def wave_to_spec_multi(data, sample_rate, fft_size, hop_length):
     """
     data: (num_channels, num_samples)
     sample_rate: sampling rate (int)
     fft_size: length of each segment (int)
+    hop_length: shift size of each segment (int)
     """
-    f, t, spectorogram = signal.stft(data, fs=sample_rate, window="hann", nperseg=fft_size)
-    """f: (freq_bins,), t: (1,), stft_data: (num_microphones, freq_bins, time_frames)"""
-    amp_spec = np.abs(spectorogram) # 振幅スペクトログラムを取得
-    phase_spec = np.exp(1j * np.angle(spectorogram)) # 位相スペクトログラムを取得(フェーザ表示)
+    f, t, complex_spec = signal.stft(data, fs=sample_rate, window='hann', nperseg=fft_size, noverlap=fft_size-hop_length)
+    """f: (freq_bins,), t: (time_frames,), spectrogram: (num_microphones, freq_bins, time_frames)"""
+    amp_spec = np.abs(complex_spec) # 振幅スペクトログラムを取得
+    phase_spec = np.exp(1j * np.angle(complex_spec)) # 位相スペクトログラムを取得(フェーザ表示)
     return amp_spec, phase_spec
 
 # スペクトログラムを音声データに変換する
-def spec_to_wav(spec, hop_length):
+def spec_to_wave(spectrogram, hop_length):
     # 逆短時間フーリエ変換(iSTFT)を行い、スペクトログラムから音声データを取得
-    wav_data = librosa.istft(spec, hop_length=hop_length)
-    return wav_data
+    wave_data = librosa.istft(spectrogram, hop_length=hop_length)
+    return wave_data
+
+# スペクトログラムを音声データに変換する（librosaが使えない場合）
+def spec_to_wave_without_librosa(spectrogram, sample_rate, fft_size, hop_length):
+    """
+    spectrogram: (freq_bins, time_frames)
+    sample_rate: sampling rate (int)
+    fft_size: length of each segment (int)
+    hop_length: shift size of each segment (int)
+    """
+    # 逆短時間フーリエ変換(iSTFT)を行い、スペクトログラムから音声データを取得
+    wave_data = signal.istft(spectrogram, fs=sample_rate, window='hann', nperseg=fft_size, noverlap=fft_size-hop_length)
+    return wave_data
 
 # スペクトログラムを図にプロットする関数
-def spec_plot(base_dir, wav_path, save_path, audio_length):
+def spec_plot(base_dir, wav_path, save_path):
     # soxコマンドによりwavファイルからスペクトログラムの画像を生成
-    cmd1 = "sox {} -n trim 0 {} rate 16.0k spectrogram".format(wav_path, audio_length)
+    cmd1 = "sox {} -n rate 16.0k spectrogram".format(wav_path)
     subprocess.call(cmd1, shell=True)
     # 生成されたスペクトログラム画像を移動
     #(コマンドを実行したディレクトリにスペクトログラムが生成されてしまうため移動)
@@ -135,6 +160,7 @@ def spec_plot(base_dir, wav_path, save_path, audio_length):
 
 # waveファイルを読み込み波形のグラフを保存する
 def wave_plot(input_path, output_path, audio_length, fig_title=None, x_scale=1.0, y_scale=0.10, ylim_min=-0.5, ylim_max=0.5):
+    
     # open wave file
     wf = wave.open(input_path,'r')
 
@@ -161,11 +187,25 @@ def wave_plot(input_path, output_path, audio_length, fig_title=None, x_scale=1.0
     ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(y_scale)) # y軸の主目盛を0.10ごとに表示
     file_name = os.path.basename(output_path).split('.')[0] # データの名前を設定
     ax.plot(x, data, label='{}'.format(file_name)) # データをプロット
-    ax.legend(edgecolor="black") # 凡例を追加
+    # ax.legend(edgecolor="black") # 凡例を追加
     fig.savefig(output_path) # グラフを保存
 
+# SNRを測る
+def calculate_snr(target, out):
+    """
+    target: 目的音 (num_samples, )
+    out: 雑音除去後の信号 (num_samples, )
+    """
+    wave_length = np.minimum(np.shape(target)[0], np.shape(out)[0])
+    # 消し残った雑音
+    target = target[:wave_length]
+    out = out[:wave_length]
+    noise = target - out
+    snr = 10. * np.log10(np.sum(np.square(target)) / np.sum(np.square(noise)))
+    return snr
+
 # 混合音声とモデルが推定した音声の質を評価(SDR, SIR, SARを算出)
-def audio_eval(audio_length, target_audio_path, interference_audio_path, mixed_audio_path, estimated_audio_path):
+def audio_eval(sample_rate, target_audio_path, interference_audio_path, mixed_audio_path, estimated_audio_path):
     """
     bss_eval_sourcesとbss_eval_imagesに関しては
     「http://bass-db.gforge.inria.fr/bss_eval/」
@@ -174,10 +214,25 @@ def audio_eval(audio_length, target_audio_path, interference_audio_path, mixed_a
     """
     from .audio_evaluation.separation import bss_eval_sources, bss_eval_images
 
-    target = load_audio_file(target_audio_path, audio_length)[np.newaxis, :]
-    interference = load_audio_file(interference_audio_path, audio_length)[np.newaxis, :]
-    mixed = load_audio_file(mixed_audio_path, audio_length)[np.newaxis, :]
-    estimated = load_audio_file(estimated_audio_path, audio_length)[np.newaxis, :]
+    # target = load_audio_file(target_audio_path, audio_length, sample_rate)[np.newaxis, :]
+    # interference = load_audio_file(interference_audio_path, audio_length, sample_rate)[np.newaxis, :]
+    # mixed = load_audio_file(mixed_audio_path, audio_length, sample_rate)[np.newaxis, :]
+    # estimated = load_audio_file(estimated_audio_path, audio_length, sample_rate)[np.newaxis, :]
+
+    # 音声データの読み込み
+    target = sf.read(target_audio_path)[0][np.newaxis, :]
+    interference = sf.read(interference_audio_path)[0][np.newaxis, :]
+    mixed = sf.read(mixed_audio_path)[0][np.newaxis, :]
+    estimated = sf.read(estimated_audio_path)[0][np.newaxis, :]
+    
+    # 各音声の長さの最大値を取得（評価時に音声の長さを揃える必要があるため）
+    max_audio_length = np.amax(np.array([target.shape[1], interference.shape[1], mixed.shape[1], estimated.shape[1]]))
+  
+    # データが三次元の時、(手前, 奥), (上,下), (左, 右)の順番でパディングを実行
+    target = np.pad(target, [(0, 0), (0, max_audio_length - target.shape[1]), (0, 0)], 'constant')
+    interference = np.pad(interference, [(0, 0), (0, max_audio_length - interference.shape[1]), (0, 0)], 'constant') 
+    mixed = np.pad(mixed, [(0, 0), (0, max_audio_length - mixed.shape[1]), (0, 0)], 'constant') 
+    estimated = np.pad(estimated, [(0, 0), (0, max_audio_length - estimated.shape[1]), (0, 0)], 'constant') 
 
     reference = np.concatenate([target, interference], 0) # 目的音と外的雑音を結合する
     mixed = np.concatenate([mixed, mixed], 0) # referenceと同じ形になるように結合
@@ -212,6 +267,330 @@ def audio_eval(audio_length, target_audio_path, interference_audio_path, mixed_a
         print("number of audio channels are incorrect")
 
     return sdr_mix, sir_mix, sar_mix, sdr_est, sir_est, sar_est
+
+# 混合音声とモデルが推定した音声の質を評価(SDR, SIR, SARを算出)
+def audio_eval_from_data(target_audio_data, interference_audio_data, mixed_audio_data, estimated_audio_data):
+    """
+    bss_eval_sourcesとbss_eval_imagesに関しては
+    「http://bass-db.gforge.inria.fr/bss_eval/」
+    を参照
+    参考にしたソースコードは「https://github.com/craffel/mir_eval」
+    """
+    from .audio_evaluation.separation import bss_eval_sources, bss_eval_images
+
+    target = target_audio_data[np.newaxis, :]
+    interference = interference_audio_data[np.newaxis, :]
+    mixed = mixed_audio_data[np.newaxis, :]
+    estimated = estimated_audio_data[np.newaxis, :]
+
+    reference = np.concatenate([target, interference], 0) # 目的音と外的雑音を結合する
+    mixed = np.concatenate([mixed, mixed], 0) # referenceと同じ形になるように結合
+    estimated = np.concatenate([estimated, estimated], 0) # referenceと同じ形になるように結合
+
+    # シングルチャンネル用 (シングルチャンネルの場合音声はshape:[1, num_samples]の形式)
+    if target.ndim == 2:
+        mixed_result = bss_eval_sources(reference, mixed) # 混合音声のSDR, SIR, SARを算出
+        reference_result = bss_eval_sources(reference, estimated) # モデルが推定した音声のSDR, SIR, SARを算出
+        # 混合音声の評価結果
+        sdr_mix = mixed_result[0][0]
+        sir_mix = mixed_result[1][0]
+        sar_mix = mixed_result[2][0]
+        # 推定音声の評価結果
+        sdr_est = reference_result[0][0]
+        sir_est = reference_result[1][0]
+        sar_est = reference_result[2][0]
+
+    # マルチチャンネル用 (マルチチャンネルの場合音声はshape:[1, num_samples, num_channels]の形式)
+    elif target.ndim == 3:
+        mixed_result = bss_eval_images(reference, mixed) # 混合音声のSDR, SIR, SARを算出
+        reference_result = bss_eval_images(reference, estimated) # モデルが推定した音声のSDR, SIR, SARを算出
+        # 混合音声の評価結果
+        sdr_mix = mixed_result[0][0]
+        sir_mix = mixed_result[2][0]
+        sar_mix = mixed_result[3][0]
+        # 推定音声の評価結果
+        sdr_est = reference_result[0][0]
+        sir_est = reference_result[2][0]
+        sar_est = reference_result[3][0]
+    else:
+        print("number of audio channels are incorrect")
+
+    return sdr_mix, sir_mix, sar_mix, sdr_est, sir_est, sar_est
+
+# ESPNetを用いた音声認識
+class ASR():
+    def __init__(self, lang='eng'):
+        # 必要モジュールをインポート（あらかじめ「pip3 install espnet_model_zoo」を実行）
+        from espnet_model_zoo.downloader import ModelDownloader
+        from espnet2.bin.asr_inference import Speech2Text
+        # E2E-ASRモデルのインスタンスを作成
+        d = ModelDownloader()
+        # 英語版
+        if lang == 'eng':
+            self.speech2text = Speech2Text(
+                # タスク（音声認識）と使用するコーパスを指定し、学習済みモデルをダウンロード
+                **d.download_and_unpack(task="asr", corpus="librispeech")
+            )
+        # 日本語版
+        elif lang == 'jp':
+            self.speech2text = Speech2Text(
+                # タスク（音声認識）と使用するコーパスを指定し、学習済みモデルをダウンロード
+                **d.download_and_unpack(task="asr", corpus="jsut")
+            )
+    # 音声認識を実行
+    def speech_recognition(self, audio_path):
+        audio_data, _ = sf.read(audio_path)
+        text, token, *_ = self.speech2text(audio_data)[0]
+        return text
+
+# Juliusを用いた音声認識
+def asr_julius(input_file_path):
+    temp_file = "julius_asr_recog_result.txt"
+    # juliusによる音声認識を実行し、結果をファイルに出力
+    # # 混合ガウスモデル（GMM）ベースの音響モデルを用いる場合→今は「前に進め」、「後ろに退がれ」など（オリジナルの単語辞書に登録されたもの）を認識
+    # asr_cmd = "echo {} | julius -C ~/julius/dictation-kit-4.5/main.jconf -C ~/julius/dictation-kit-4.5/am-gmm.jconf -nostrip -input rawfile -quiet > {}".format(input_file_path, temp_file)
+    # DNNベースの音響モデルを用いる場合→今はさまざまな日本語を認識（英語は不可）
+    asr_cmd = "echo {} | julius -C ~/julius/dictation-kit-4.5/main.jconf -C ~/julius/dictation-kit-4.5/am-dnn.jconf -dnnconf ~/julius/dictation-kit-4.5/julius.dnnconf -nostrip -input rawfile -quiet > {}".format(input_file_path, save_path)
+    subprocess.call(asr_cmd, shell=True)
+    # 出力ファイルから認識結果の部分のみを抽出
+    with open(temp_file) as f:
+        lines = f.readlines()
+    recog_text_line = [line.strip() for line in lines if line.startswith('sentence1')] # "sentence1"から始まる行をサーチ
+    recog_result = recog_text_line[0][12:-2] # "sentence1: "から"。"の間の文章を抽出
+    # 余分なファイルが残らないように削除
+    os.remove(temp_file)
+    return recog_result
+
+# 正解ラベルのテキストと音声認識結果のテキストの距離を算出
+def editDistance(r, h):
+    '''
+    This function is to calculate the edit distance of reference sentence and the hypothesis sentence.
+
+    Main algorithm used is dynamic programming.
+
+    Attributes: 
+        r -> the list of words produced by splitting reference sentence.
+        h -> the list of words produced by splitting hypothesis sentence.
+    '''
+    d = np.zeros((len(r)+1)*(len(h)+1), dtype=np.uint8).reshape((len(r)+1, len(h)+1))
+    for i in range(len(r)+1):
+        d[i][0] = i
+    for j in range(len(h)+1):
+        d[0][j] = j
+    for i in range(1, len(r)+1):
+        for j in range(1, len(h)+1):
+            if r[i-1] == h[j-1]:
+                d[i][j] = d[i-1][j-1]
+            else:
+                substitute = d[i-1][j-1] + 1
+                insert = d[i][j-1] + 1
+                delete = d[i-1][j] + 1
+                d[i][j] = min(substitute, insert, delete)
+    return d
+
+def getStepList(r, h, d):
+    '''
+    This function is to get the list of steps in the process of dynamic programming.
+
+    Attributes: 
+        r -> the list of words produced by splitting reference sentence.
+        h -> the list of words produced by splitting hypothesis sentence.
+        d -> the matrix built when calulating the editting distance of h and r.
+    '''
+    x = len(r)
+    y = len(h)
+    list = []
+    while True:
+        if x == 0 and y == 0: 
+            break
+        elif x >= 1 and y >= 1 and d[x][y] == d[x-1][y-1] and r[x-1] == h[y-1]: 
+            list.append("e")
+            x = x - 1
+            y = y - 1
+        elif y >= 1 and d[x][y] == d[x][y-1]+1:
+            list.append("i")
+            x = x
+            y = y - 1
+        elif x >= 1 and y >= 1 and d[x][y] == d[x-1][y-1]+1:
+            list.append("s")
+            x = x - 1
+            y = y - 1
+        else:
+            list.append("d")
+            x = x - 1
+            y = y
+    return list[::-1]
+
+# 音声認識評価結果をファイルに書き込む
+def alignedPrint(list, r, h, result, result_path):
+    '''
+    This funcition is to print the result of comparing reference and hypothesis sentences in an aligned way.
+    
+    Attributes:
+        list   -> the list of steps.
+        r      -> the list of words produced by splitting reference sentence.
+        h      -> the list of words produced by splitting hypothesis sentence.
+        result -> the rate calculated based on edit distance.
+    '''
+    # 結果を保存するファイルの中身を初期化
+    if os.path.exists(result_path):
+        os.remove(result_path)
+    
+#     print("REF:", end=" ")
+    with open(result_path, mode='a') as f:
+        print("REF:", end=" ", file=f)
+    for i in range(len(list)):
+        if list[i] == "i":
+            count = 0
+            for j in range(i):
+                if list[j] == "d":
+                    count += 1
+            index = i - count
+#             print(" "*(len(h[index])), end=" ")
+            with open(result_path, mode='a') as f:
+                print(" "*(len(h[index])), end=" ", file=f)
+        elif list[i] == "s":
+            count1 = 0
+            for j in range(i):
+                if list[j] == "i":
+                    count1 += 1
+            index1 = i - count1
+            count2 = 0
+            for j in range(i):
+                if list[j] == "d":
+                    count2 += 1
+            index2 = i - count2
+            if len(r[index1]) < len(h[index2]):
+#                 print(r[index1] + " " * (len(h[index2])-len(r[index1])), end=" ")
+                with open(result_path, mode='a') as f:
+                    print(r[index1] + " " * (len(h[index2])-len(r[index1])), end=" ", file=f)
+            else:
+#                 print(r[index1], end=" "),
+                with open(result_path, mode='a') as f:
+                    print(r[index1], end=" ", file=f)
+        else:
+            count = 0
+            for j in range(i):
+                if list[j] == "i":
+                    count += 1
+            index = i - count
+#             print(r[index], end=" "),
+            with open(result_path, mode='a') as f:
+                print(r[index], end=" ", file=f)
+#     print("\nHYP:", end=" ")
+    with open(result_path, mode='a') as f:
+        print("\nHYP:", end=" ", file=f)
+    for i in range(len(list)):
+        if list[i] == "d":
+            count = 0
+            for j in range(i):
+                if list[j] == "i":
+                    count += 1
+            index = i - count
+#             print(" " * (len(r[index])), end=" ")
+            with open(result_path, mode='a') as f:
+                print(" " * (len(r[index])), end=" ", file=f)
+        elif list[i] == "s":
+            count1 = 0
+            for j in range(i):
+                if list[j] == "i":
+                    count1 += 1
+            index1 = i - count1
+            count2 = 0
+            for j in range(i):
+                if list[j] == "d":
+                    count2 += 1
+            index2 = i - count2
+            if len(r[index1]) > len(h[index2]):
+#                 print(h[index2] + " " * (len(r[index1])-len(h[index2])), end=" ")
+                with open(result_path, mode='a') as f:
+                    print(h[index2] + " " * (len(r[index1])-len(h[index2])), end=" ", file=f)
+            else:
+#                 print(h[index2], end=" ")
+                with open(result_path, mode='a') as f:
+                    print(h[index2], end=" ", file=f)
+        else:
+            count = 0
+            for j in range(i):
+                if list[j] == "d":
+                    count += 1
+            index = i - count
+#             print(h[index], end=" ")
+            with open(result_path, mode='a') as f:
+                print(h[index], end=" ", file=f)
+#     print("\nEVA:", end=" ")
+    with open(result_path, mode='a') as f:
+        print("\nEVA:", end=" ", file=f)
+    for i in range(len(list)):
+        if list[i] == "d":
+            count = 0
+            for j in range(i):
+                if list[j] == "i":
+                    count += 1
+            index = i - count
+#             print("D" + " " * (len(r[index])-1), end=" ")
+            with open(result_path, mode='a') as f:
+                print("D" + " " * (len(r[index])-1), end=" ", file=f)
+        elif list[i] == "i":
+            count = 0
+            for j in range(i):
+                if list[j] == "d":
+                    count += 1
+            index = i - count
+#             print("I" + " " * (len(h[index])-1), end=" ")
+            with open(result_path, mode='a') as f:
+                print("I" + " " * (len(h[index])-1), end=" ", file=f)
+        elif list[i] == "s":
+            count1 = 0
+            for j in range(i):
+                if list[j] == "i":
+                    count1 += 1
+            index1 = i - count1
+            count2 = 0
+            for j in range(i):
+                if list[j] == "d":
+                    count2 += 1
+            index2 = i - count2
+            if len(r[index1]) > len(h[index2]):
+#                 print("S" + " " * (len(r[index1])-1), end=" ")
+                with open(result_path, mode='a') as f:
+                    print("S" + " " * (len(r[index1])-1), end=" ", file=f)
+            else:
+#                 print("S" + " " * (len(h[index2])-1), end=" ")
+                with open(result_path, mode='a') as f:
+                    print("S" + " " * (len(h[index2])-1), end=" ", file=f)
+        else:
+            count = 0
+            for j in range(i):
+                if list[j] == "i":
+                    count += 1
+            index = i - count
+#             print(" " * (len(r[index])), end=" ")
+            with open(result_path, mode='a') as f:
+                print(" " * (len(r[index])), end=" ", file=f)
+#     print("\nWER: " + result)
+    with open(result_path, mode='a') as f:
+        print("\nWER: " + result, file=f)
+    
+# 音声認識性能（Word Error Rate; WER）の評価
+def asr_eval(ref_text, hyp_text, result_path):
+    """
+    ref_text: 正解ラベルのテキスト （例） ['IT', 'IS', 'MARVELLOUS']
+    hyp_text: 音声認識結果のテキスト （例） ['IT', 'WAS', 'MADNESS']
+    result_path: 音声認識性能の評価結果を保存するファイルのパス
+    """
+    # build the matrix
+    d = editDistance(ref_text, hyp_text)
+
+    # find out the manipulation steps
+    list = getStepList(ref_text, hyp_text, d)
+
+    # print the result in aligned way
+    result = float(d[len(ref_text)][len(hyp_text)]) / len(ref_text) * 100
+    result_str = str("%.2f" % result) + "%"
+    alignedPrint(list, ref_text, hyp_text, result_str, result_path)
+    return result
+    
 
 # 振幅スペクトログラム、位相差スペクトログラム、ログメルスペクトログラムを算出
 class SpectrogramFeatures():
@@ -349,6 +728,70 @@ def calculate_steering_vector(mic_alignments, source_locations, freqs, sound_spe
         steering_vector = steering_vector / np.linalg.norm(steering_vector, 2, axis=2, keepdims=True)
         """steering_vector: (freq_bins, num_sources, num_microphones)"""
         return steering_vector
+        
+# 時間周波数マスクを推定する
+def estimate_mask(stft_data, steering_vectors, omega):
+    """
+    stft_data: マイクロホン入力信号 (num_microhones, freq_bins, time_frames)
+    steering_vectors: ステアリングベクトル (freq_bins, target_signal_range, num_microhones)
+    omega: 目的音の範囲 (num_sources, target_signal_range=72)
+    """
+    inner_product = np.einsum("kim,mkt->kit", np.conjugate(steering_vectors), stft_data)
+    """inner_product: (freq_bins, target_signal_range, time_frames)"""
+    n_omega = np.shape(omega)[1]
+    estimate_doas = np.argmax(np.abs(inner_product), axis=1)
+    """estimate_doas: (freq_bins, time_frames)"""
+    estimate_doas_mask = np.identity(n_omega)[estimate_doas]
+    """estimate_doas_mask: (freq_bins, time_frames, target_signal_range)"""
+    mask = np.einsum("kti,si->skt", estimate_doas_mask, omega)
+    """mask: (num_sources, freq_bins, time_frames)"""
+    return mask
+
+# マスクと入力信号から共分散行列を推定
+def estimate_covariance_matrix(stft_data, mask):
+    """
+    stft_data: 入力信号 (num_microphones, freq_bins, time_frames)
+    mask: 音源ごとの時間周波数マスク (num_sources, freq_bins, time_frames)
+    """
+    # 目的音の共分散行列を推定する
+    Rs = np.einsum("skt,mkt,nkt->skmn", mask, stft_data, np.conjugate(stft_data))
+    """Rs: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    sum_target_mask = np.sum(mask, axis=2)
+    """sum_target_mask: (num_sources, freq_bins)"""
+    Rs = Rs / np.maximum(sum_target_mask, 1.e-18)[..., None, None]
+    """Rs: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    # 雑音の共分散行列を推定する
+    Rn = np.einsum("skt,mkt,nkt->skmn", 1-mask, stft_data, np.conjugate(stft_data))
+    """Rn: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    sum_noise_mask = np.sum(1-mask, axis=2)
+    """sum_noise_mask: (num_sources, freq_bins)"""
+    Rn = Rn / np.maximum(sum_noise_mask, 1.e-18)[..., None, None]
+    # 固有値分解をして半正定値行列に変換
+    eigenvalues_Rs, eigenvectors_Rs = np.linalg.eigh(Rs)
+    """eigenvalues_Rs: (num_sources, freq_bins, num_microphones), eigenvectors_Rs: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    Rs_org = Rs.copy()
+    eigenvalues_Rs[np.real(eigenvalues_Rs) < 1.e-18] = 1.e-18 # 固有値が0より小さい場合は0に置き換える
+    Rs = np.einsum("skmi,ski,skni->skmn", eigenvectors_Rs, eigenvalues_Rs, np.conjugate(eigenvectors_Rs))
+    """Rn: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    eigenvalues_Rn, eigenvectors_Rn = np.linalg.eigh(Rn)
+    """eigenvalues_Rn: (num_sources, freq_bins, ), eigenvectors_Rn: (num_sources, freq_bins, num_microphones, )"""
+    Rn_org = Rn.copy()
+    eigenvalues_Rn[np.real(eigenvalues_Rn) < 1.e-18] = 1.e-18 # 固有値が0より小さい場合は0に置き換える
+    Rn = np.einsum("skmi,ski,skni->skmn", eigenvectors_Rn, eigenvalues_Rn, np.conjugate(eigenvectors_Rn))
+    """Rn: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    return Rs, Rn
+
+# 音源のスパース性を仮定し、共分散行列からステアリングベクトルを推定する
+def estimate_steering_vector(Rs):
+    """
+    Rs: 共分散行列 (num_sources, freq_bins, num_microphones, num_microphones)
+    """
+    # 固有値分解を実施して最大固有値を与える固有ベクトルを取得
+    w, v = np.linalg.eigh(Rs)
+    """w: (num_sources, freq_bins, num_microphones), v: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    steering_vector = v[..., -1]
+    """steering_vector: (num_sources, freq_bins, num_microphones)"""
+    return steering_vector
 
 # 遅延和ビームフォーマ
 def ds_beamformer(stft_data, steering_vectors):
@@ -390,6 +833,78 @@ def mvdr_beamformer(stft_data, steering_vectors):
     c_hat = np.einsum("kt,km->mkt", s_hat, steering_vectors[:, 0, :])
     """c_hat: (num_microphones, freq_bins, time_frames)"""
     return c_hat
+
+# 最小分散無歪応答ビームフォーマ（共分散行列のみから計算）
+def mvdr_beamformer_new(stft_data, Rs, Rn):
+    """
+    stft_data: マイクロホン入力信号 (num_microphones, freq_bins, time_frames)
+    Rs: 目的音の共分散行列 (num_sources, freq_bins, num_microphones, num_microphones)
+    Rn: 雑音の共分散行列 (num_sources, freq_bins, num_microphones, num_microphones)
+    """
+    # 共分散行列の逆行列を計算する
+    Rn_inverse = np.linalg.pinv(Rn)
+    """Rn_inverse: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    # フィルタを計算する
+    Rn_inverse_Rs = np.einsum("skmi,skin->skmn", Rn_inverse, Rs)
+    """Rn_inverse_Rs: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    w_mvdr = Rn_inverse_Rs / np.maximum(np.trace(Rn_inverse_Rs, axis1=-2, axis2=-1), 1.e-18)[..., None, None]
+    """w_mvdr: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    # フィルタを掛ける
+    c_hat = np.einsum("skmn,mkt->nskt", np.conjugate(w_mvdr), stft_data)
+    """c_hat: (num_microphones, num_sources, freq_bins, time_frames)"""
+    return c_hat
+
+# Max-SNR（GEV）ビームフォーマ
+def max_snr_beamformer(stft_data, Rs, Rn):
+    """
+    stft_data: マイクロホン入力信号 (num_microphones, freq_bins, time_frames)
+    Rs: 目的音の共分散行列 (num_sources, freq_bins, num_microphones, num_microphones)
+    Rn: 雑音の共分散行列 (num_sources, freq_bins, num_microphones, num_microphones)
+    """
+    # 音源数を取得
+    Ns = np.shape(Rs)[0]
+    # 周波数の数を取得
+    Nk = np.shape(Rs)[1]
+    # 一般化固有値分解
+    max_snr_filter = None
+    max_snr_filter_all = None
+    for s in range(int(Ns)):
+        for k in range(int(Nk)):
+            w, v = scipy.linalg.eigh(Rs[s, k, ...], Rn[s, k, ...])
+            """w: (num_microphones, ), v: (num_microphones, num_microphones)"""
+            # 最大固有値に対応する固有ベクトルを取得
+            if k == 0:
+                max_snr_filter = v[None, :, -1]
+            else:
+                max_snr_filter = np.concatenate((max_snr_filter, v[None, :, -1]), axis=0)
+        if s == 0:
+            max_snr_filter_all = max_snr_filter[None, ...]
+        else:
+            max_snr_filter_all = np.concatenate((max_snr_filter_all, max_snr_filter[None, ...]), axis=0)
+    """max_snr_filter_all: (num_sources, freq_bins, num_microphones)"""
+    Rs_w = np.einsum("skmn,skn->skm", Rs, max_snr_filter_all)
+    """Rs_w: (num_sources, freq_bins, num_microphones)"""
+    beta = Rs_w / np.einsum("skm,skm->sk", np.conjugate(max_snr_filter_all), Rs_w)[:, :, None]
+    """beta: (num_sources, freq_bins, num_microphones)"""
+    w_max_snr = beta[:, :, None, :] * max_snr_filter_all[:, :, :, None]
+    """w_max_snr: (num_sources, freq_bins, num_microphones, num_microphones)"""
+    # フィルタを掛ける
+    c_hat = np.einsum("skim,ikt->mskt", np.conjugate(w_max_snr), stft_data)
+    """c_hat: (num_microphones, num_sources, freq_bins, time_frames)"""
+    return c_hat
+
+# マスク推定
+# Ideal Ratio Maskを算出
+def calc_ideal_ratio_mask(self, target_spec, noise_spec):
+    """
+    target_spec: (freq_bins=257, time_steps=513)
+    noise_spec: (freq_bins=257, time_steps=513)
+    """
+    # 参考：「https://gist.github.com/jonashaag/677e1ddab99f3daba367de9ec022e942#file-cirm-py-L39」
+    # 0除算を避ける
+    target_IRM = np.sqrt(target_spec ** 2 / np.maximum((target_spec ** 2 + noise_spec ** 2), 1e-7))
+    noise_IRM = np.sqrt(noise_spec ** 2 / np.maximum((target_spec ** 2 + noise_spec ** 2), 1e-7))
+    return target_IRM, noise_IRM
 
 
 """
@@ -565,7 +1080,7 @@ if __name__ == "__main__":
     # audio_data = load_audio_file(file_path, audio_length, sample_rate)
     # mag, phase = wave_to_spec(audio_data, n_fft, hop_length)
     # target_spec = mag * phase
-    # istft_data = spec_to_wav(target_spec, hop_length)
+    # istft_data = spec_to_wave(target_spec, hop_length)
     # save_audio_file(save_path, istft_data, sample_rate)
 
     # fft_size = 1024
@@ -577,66 +1092,78 @@ if __name__ == "__main__":
     # amp, phase = wave_to_spec(audio_data, fft_size, hop_length, win_length=None)
     # print(amp.shape)
 
-    # input_path = "../AudioDatasets/DEMAND/Multichannel_noise_at_LIVING/ch01.wav"
-    # output_path = "./test.png"
-    # audio_length = 30
-    # wave_plot(input_path, output_path, audio_length, fig_title=None, ylim_min=-0.01, ylim_max=0.01)
+    input_path = "../AudioDatasets/NoisySpeechDatabase/clean_testset_wav_16kHz_original_length/p232_001.wav"
+    output_path = "./test.png"
+    audio_length = 30
+    wave_plot(input_path, output_path, audio_length, fig_title=None, ylim_min=-0.01, ylim_max=0.01)
 
-    # ビームフォーミング用
-    # 周波数の数
-    fft_size = 512
-    Nk = fft_size / 2 + 1
-    # サンプリングレート [Hz]
-    sample_rate = 16000
-    # 各ビンの周波数
-    freqs = np.arange(0, Nk, 1) * sample_rate / fft_size
-    # 音源とマイクロホンの距離 [m]
-    distance_mic_to_source=2. 
-    # 音源方向（音源が複数ある場合はリストに追加）
-    azimuth = [0] # 方位角
-    elevation = [np.pi/6] # 仰角
-    # 部屋（シミュレーション環境）の設定
-    room_width = 5.0
-    room_length = 5.0
-    room_height = 5.0
-    # マイクロホンアレイの中心位置
-    nakbot_height = 0.57 # Nakbotの全長
-    mic_array_height = nakbot_height - 0.04 # 0.04はTAMAGO-03マイクロホンアレイの頂上部からマイクロホンアレイ中心までの距離
-    mic_array_loc = np.r_[room_width/2, room_length/2, 0] + [0, 0, mic_array_height] # 部屋の中央に配置されたNakbot上のマイクロホンアレイ
-    print("マイクロホンアレイ中心座標：", mic_array_loc)
-    # TAMAGO-03のマイクロホンアレイのマイクロホン配置（単位はm）
-    mic_alignments = np.array(
-    [
-        [0.035, 0.0, 0.0],
-        [0.035/np.sqrt(2), 0.035/np.sqrt(2), 0.0],
-        [0.0, 0.035, 0.0],
-        [-0.035/np.sqrt(2), 0.035/np.sqrt(2), 0.0],
-        [-0.035, 0.0, 0.0],
-        [-0.035/np.sqrt(2), -0.035/np.sqrt(2), 0.0],
-        [0.0, -0.035, 0.0],
-        [0.035/np.sqrt(2), -0.035/np.sqrt(2), 0.0]
-    ])
-    n_channels = np.shape(mic_alignments)[0]
-    print("マイクロホン数：", n_channels)
-    # get the microphone array （各マイクロホンの空間的な座標）
-    R = mic_alignments.T + mic_array_loc[:, None]
-    """R: (3D coordinates [m], num_microphones)"""
-    # 音源の位置（HARK座標系に対応） [仰角θ, 方位角φ]
-    doas = np.array(
-    [[elevation[0], azimuth[0]], # １個目の音源 
-    # [elevation[1], azimuth[1]] # ２個目の音源
-    ])
-    source_locations = np.zeros((3, doas.shape[0]), dtype=doas.dtype)
-    """source_locations: (xyz, num_sources)"""
-    source_locations[0,  :] = np.cos(doas[:, 1]) * np.cos(doas[:, 0]) # x = rcosφcosθ
-    source_locations[1,  :] = np.sin(doas[:, 1]) * np.cos(doas[:, 0]) # y = rsinφcosθ
-    source_locations[2,  :] = np.sin(doas[:, 0]) # z = rsinθ
-    source_locations *= distance_mic_to_source
-    source_locations += mic_array_loc[:, None] # マイクロホンアレイからの相対位置→絶対位置
-    audio_path = "./audio_separation/multichannel_audio_for_test/p232_007_target.wav"
-    multi_audio_data = load_audio_file(audio_path, length=3, sample_rate=sample_rate)
-    multi_amp_spec, _ = wave_to_spec_multi(multi_audio_data.T, sample_rate=sample_rate, fft_size=fft_size)
-    steering_vectors = calculate_steering_vector(R, source_locations, freqs, sound_speed=340, is_use_far=False)
-    mvdr_output = mvdr_beamformer(multi_amp_spec, steering_vectors)
-    print(mvdr_output.shape)
+    # # ビームフォーミング用
+    # # 周波数の数
+    # fft_size = 512
+    # hop_length = 160
+    # Nk = fft_size / 2 + 1
+    # # サンプリングレート [Hz]
+    # sample_rate = 16000
+    # # 各ビンの周波数
+    # freqs = np.arange(0, Nk, 1) * sample_rate / fft_size
+    # # 音源とマイクロホンの距離 [m]
+    # distance_mic_to_source=2. 
+    # # 音源方向（音源が複数ある場合はリストに追加）
+    # azimuth = [0] # 方位角
+    # elevation = [np.pi/6] # 仰角
+    # # 部屋（シミュレーション環境）の設定
+    # room_width = 5.0
+    # room_length = 5.0
+    # room_height = 5.0
+    # # マイクロホンアレイの中心位置
+    # nakbot_height = 0.57 # Nakbotの全長
+    # mic_array_height = nakbot_height - 0.04 # 0.04はTAMAGO-03マイクロホンアレイの頂上部からマイクロホンアレイ中心までの距離
+    # mic_array_loc = np.r_[room_width/2, room_length/2, 0] + [0, 0, mic_array_height] # 部屋の中央に配置されたNakbot上のマイクロホンアレイ
+    # print("マイクロホンアレイ中心座標：", mic_array_loc)
+    # # TAMAGO-03のマイクロホンアレイのマイクロホン配置（単位はm）
+    # mic_alignments = np.array(
+    # [
+    #     [0.035, 0.0, 0.0],
+    #     [0.035/np.sqrt(2), 0.035/np.sqrt(2), 0.0],
+    #     [0.0, 0.035, 0.0],
+    #     [-0.035/np.sqrt(2), 0.035/np.sqrt(2), 0.0],
+    #     [-0.035, 0.0, 0.0],
+    #     [-0.035/np.sqrt(2), -0.035/np.sqrt(2), 0.0],
+    #     [0.0, -0.035, 0.0],
+    #     [0.035/np.sqrt(2), -0.035/np.sqrt(2), 0.0]
+    # ])
+    # n_channels = np.shape(mic_alignments)[0]
+    # print("マイクロホン数：", n_channels)
+    # # get the microphone array （各マイクロホンの空間的な座標）
+    # R = mic_alignments.T + mic_array_loc[:, None]
+    # """R: (3D coordinates [m], num_microphones)"""
+    # # 音源の位置（HARK座標系に対応） [仰角θ, 方位角φ]
+    # doas = np.array(
+    # [[elevation[0], azimuth[0]], # １個目の音源 
+    # # [elevation[1], azimuth[1]] # ２個目の音源
+    # ])
+    # source_locations = np.zeros((3, np.shape(doas)[0]), dtype=doas.dtype)
+    # """source_locations: (xyz, num_sources)"""
+    # source_locations[0,  :] = np.cos(doas[:, 1]) * np.cos(doas[:, 0]) # x = rcosφcosθ
+    # source_locations[1,  :] = np.sin(doas[:, 1]) * np.cos(doas[:, 0]) # y = rsinφcosθ
+    # source_locations[2,  :] = np.sin(doas[:, 0]) # z = rsinθ
+    # source_locations *= distance_mic_to_source
+    # source_locations += mic_array_loc[:, None] # マイクロホンアレイからの相対位置→絶対位置
+    # audio_path = "./audio_separation/data/multichannel_audio_for_test/p232_007_target.wav"
+    # multi_audio_data = load_audio_file(audio_path, length=3, sample_rate=sample_rate)
+    # multi_amp_spec, _ = wave_to_spec_multi(multi_audio_data.T, sample_rate=sample_rate, fft_size=fft_size, hop_length=hop_length)
+    # steering_vectors = calculate_steering_vector(R, source_locations, freqs, sound_speed=340, is_use_far=False)
+    # mvdr_output = mvdr_beamformer(multi_amp_spec, steering_vectors)
+    # print(mvdr_output.shape)
+
+#     # 音声認識動作テスト
+#     # 英語版
+#     lang = 'eng'
+#     audio_path = "../sample_audio/eng/estimated_voice.wav"
+#     # 日本語版
+# #     lang = 'jp'
+# #     audio_path = "../sample_audio/jp/BASIC5000_0001.wav"
+#     asr_ins = ASR(lang)
+#     result = asr_ins.speech_recognition(audio_path)
+#     print("recognition_result:", result)
 

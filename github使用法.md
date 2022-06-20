@@ -15,7 +15,7 @@
    $ git remote add origin https://github.com/[ユーザ名]/[リポジトリ名]
    ```
 
-3. 以下のコマンドで`~/.ssh/id_rsa.pub`にsshキーが生成されるので、その中身(ssh-rsaから始まる部分)をgithubの公開鍵のページ([https://github.com/settings/keys](https://github.com/settings/keys))に登録する。鍵名は`id_rsa.pub`で良い。(2個目以降のリポジトリを作る際には必要ない)
+3. 以下のコマンドで`~/.ssh/id_rsa.pub`にsshキー（公開鍵）が生成されるので、その中身(ssh-rsaから始まる部分)をgithubの公開鍵のページ([https://github.com/settings/keys](https://github.com/settings/keys))に登録する。鍵名は`id_rsa.pub`で良い(2個目以降のリポジトリを作る際には必要ない)。（秘密鍵は自分のPCに保存し、公開しない）
 
    ```
    $ ssh-keygen -t rsa
@@ -45,13 +45,35 @@
 
 
 
+#### 個人アクセストークンの作成（パスワード認証から個人アクセストークン認証に変更されたため）
+
+[このページ](https://zenn.dev/yuri0427/articles/9587ae6a578ee9)を参考に、[githubの個人アクセストークン作成手順](https://docs.github.com/ja/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token)を開き、手順に従って個人アクセストークンを作成
+
+
+
+#### ローカルの変更をリモートリポジトリに登録
+
+以下のコマンドを実行
+
+```
+$ git push
+```
+
+ユーザネームはgithubのユーザネーム（D1ngnなど）、パスワードには上記で生成した個人アクセストークンを入力（求められた場合のみ）
+
+
+
 #### githubを使用した作業
 
-・リモートリポジトリの変更をローカルに反映
+- リモートリポジトリの変更をローカルに反映
 
-```
-$ git pull origin master
-```
+  ```
+  $ git pull origin master
+  ```
+
+  
+
+
 
 
 
@@ -85,3 +107,10 @@ dir/
    	url = git@github.com:D1ngn/[新しいリポジトリ名].git
    	fetch = +refs/heads/*:refs/remotes/origin/*
    ```
+
+あるいは、以下のコマンドを実行して直接`.git/config`を変更
+
+```
+$ git remote set-url origin https://github.com/D1ngn/[新しいリポジトリ名]
+```
+

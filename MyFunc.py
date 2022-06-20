@@ -893,6 +893,23 @@ def max_snr_beamformer(stft_data, Rs, Rn):
     """c_hat: (num_microphones, num_sources, freq_bins, time_frames)"""
     return c_hat
 
+# MUSIC法を用いた音源定位
+def localize_music(spec, mic_alignments, sample_rate, fft_size, freq_range=[200, 3000]):
+    """
+    spec: (num_channels, freq_bins, time_frames)
+    mic_alignments: (3D coordinates [m], num_microphones)
+    """
+    # MUSIC法を用いて音源定位（cは音速）
+    doa = pa.doa.algorithms['MUSIC'](mic_alignments, sample_rate, fft_size, c=343., num_src=1) # Construct the new DOA object
+    doa.locate_sources(spec, freq_range=freq_range)
+    speaker_azimuth = doa.azimuth_recon / np.pi * 180.0 # rad→deg
+    # 0°〜360°表記を-180°〜180°表記に変更
+    if speaker_azimuth[0] > 180:
+        speaker_azimuth = int(speaker_azimuth[0] - 360)
+    else:
+        speaker_azimuth = int(speaker_azimuth[0])
+    return speaker_azimuth
+
 # マスク推定
 # Ideal Ratio Maskを算出
 def calc_ideal_ratio_mask(self, target_spec, noise_spec):

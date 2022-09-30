@@ -1,5 +1,6 @@
 
 # 機械学習用
+from multiprocessing.resource_sharer import DupFd
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -9,21 +10,20 @@ import seaborn as sns
 """
 データ理解（EDA: Exploratory Data Analysis）
 """
-# カテゴリ変数の分析
-def analyze_categorical(df, column_name):
+# データの概要確認
+def data_overview(df):
     """
+    欠損値や外れ値の把握、標準化の必要性
     df: pandasのデータフレーム （num_samples, num_features）
-    column_name: 列名 str型
     """
-    # ユニークな要素の値のリスト（numpy array形式）を取得
-    unique_list = df[column_name].unique()
-    # ユニークな要素の値（indexに格納）とその出現回数（dataに格納）を取得
-    unique_freq = df[column_name].value_counts()
-    # ユニークな要素の個数を取得（drop=FalseでNaNを含んだ値を返す）
-    unique_num = df[column_name].nunique(drop=True)
-    return unique_list, unique_freq, unique_num
+    # 列名（変数名）、欠損値の数、データのタイプを表示
+    df.info()
+    # 項目数、平均、標準偏差、最小値・最大値、四分位数を表示
+    df.describe().T
+    # 指定した要約特徴量を表示
+    df.agg(['dtype', 'count', 'nunique', 'sum', 'mean', 'std', 'min', 'max', 'first', 'last']).T
 
-# 特徴量の列ごとに欠損値の数を算出
+# 特徴量の列ごとに欠損値の数と割合を算出
 def missing_values_table(df):
     """
     df: pandasのデータフレーム （num_samples, num_features）
@@ -47,6 +47,32 @@ def missing_values_table(df):
         "There are " + str(mis_val_table_ren_columns.shape[0]) +
             " columns that have missing values.")
     return mis_val_table_ren_columns
+
+# カテゴリ変数の分析
+def analyze_categorical(df, column_name):
+    """
+    df: pandasのデータフレーム （num_samples, num_features）
+    column_name: 列名 str型
+    """
+    # ユニークな要素の値のリスト（numpy array形式）を取得
+    unique_list = df[column_name].unique()
+    # ユニークな要素の値（indexに格納）とその出現回数（dataに格納）を取得
+    unique_freq = df[column_name].value_counts()
+    # ユニークな要素の個数を取得（drop=FalseでNaNを含んだ値を返す）
+    unique_num = df[column_name].nunique(drop=True)
+    return unique_list, unique_freq, unique_num
+
+# 各説明変数と目的変数の相関係数を算出し、可視化
+def show_corr(df):
+    """
+    df: pandasのデータフレーム （num_samples, num_features）
+    """
+    df_corr = df.corr()
+    fig, ax = plt.subplots(figsize=(12, 9)) 
+    sns.heatmap(df_corr, square=True, vmax=1, vmin=-1, center=0)
+    plt.savefig('df_heatmap.png')
+    return df_corr
+
 
 
 """
@@ -89,9 +115,9 @@ def apply_kfold(X_train, y_train, FOLDS=5, SEED=0):
     FOLDS: 交差検証に用いるホールド数
     """
     kf = KFold(n_splits=FOLDS, shuffle=True, random_state=SEED)
-    for fold, (idx_train, idx_valid) in enumerate(kf.split(X_train)):
-        X_tr, X_va = X_train.iloc[idx_tr], X_train.iloc[idx_va]
-        y_tr, y_va = y_train.iloc[idx_tr], y_train.iloc[idx_va]
+    for fold, (train_indices, valid_indices) in enumerate(kf.split(X_train)):
+        X_tr, X_va = X_train.iloc[train_indices], X_train.iloc[valid_indices]
+        y_tr, y_va = y_train.iloc[train_indices], y_train.iloc[valid_indices]
 
     return X_tr, X_va, y_tr, y_va
 
@@ -122,16 +148,59 @@ def apply_column(df, base_column_name, add_column_name):
 def apply_multiple_column(df, base_column_name_1, base_column_name_2, add_column_name):
     """
     df: pandasのデータフレーム （num_samples, num_features）
-    base_column_name: 基となる列名 str型
+    base_column_name_1: 基となる列名1 str型
+    base_column_name_2: 基となる列名2 str型
     add_column_name: 新たに追加する列名 str型（列を上書きする場合は基となる列名（base_column_name）を指定）
     """
     # 行（row）ごとに処理
     def apply_each_row(row):
-        new_val = row[base_column_name_1] + row[base_column_name_2] # サンプル：同じ行に含まれる2つの列の値を足し合わせる例
+        new_val = row[base_column_name_1] * row[base_column_name_2] # サンプル：同じ行に含まれる2つの列の値を掛け合わせる例
         return new_val
     # データフレーム全体にapplyを適用（axis=1で行ごとに適用）
     df[add_column_name] = df.apply(apply_each_row, axis=1)
     return df
+
+# 数値変数の加減乗除算をして、新たな特徴量を作成
+def numeric_variables_operation(df, mode='brute_force'):
+    """
+    Args:
+        df (pd.DataFrame): 特徴量のデータフレーム（目的変数の列を含まない） （num_samples, num_features）
+    Return:
+        feature_matrix (pd.DataFrame): 加減乗除処理後の特徴量のデータフレーム （num_samples, num_features）
+    """
+    # 特徴量同士を総当たりで加減乗算して特徴量を生成する場合
+    if mode == 'brute_force':
+        import featuretools as ft
+        # EntitySetを作成（idは任意）
+        es = ft.EntitySet(id='example')
+        # Entity（データフレーム）を追加（dataframe_nameは自分が付けたいデータフレームの名前、indexは主キーに相当するもの）
+        es = es.add_dataframe(dataframe_name='sample_df', dataframe=df, index='ID')
+        # 総当たりで特徴量生成
+        feature_matrix, feature_defs = ft.dfs(entityset=es, 
+                                              target_dataframe_name='sample_df', 
+                                              trans_primitive=['add_numeric', 'multiply_numeric'], # 特徴量同士の足し算と掛け算を行う場合
+                                              agg_primitive=[], # グループ化して集計を行いたい場合に指定
+                                              max_depth=1, # 何階層分加減乗算を繰り返すか
+                                              ) 
+    # 選択した特徴量同士を加減乗算して特徴量を生成する場合
+    elif mode == 'feature_selection':
+        from xfeat import Pipeline, SelectNumerical, ArithmeticCombinations
+        encoder = Pipeline(
+            [
+                SelectNumerical(),
+                ArithmeticCombinations(
+                    input_cols=["column1", "column2"],
+                    drop_origin=True,
+                    operator="*", # 掛け算の場合
+                    r=2, 
+                ),
+            ]
+        )
+        feature_matrix = encoder.fit_transform(df)
+    else:
+        print("No operation")
+        feature_matrix = df
+    return feature_matrix
 
 # 列をグループ化した後、グループごとに特定の特徴量の値を集計して要約統計量を作成
 def agg_features_groupby(df, groupby_column, features_columns):
@@ -175,26 +244,105 @@ def cat_encoding(train_features, test_features, encoding='ohe'):
         raise ValueError("Encoding must be either 'ohe' or 'le'")
     return train_features, test_features, cat_indices
 
+# 標準化処理（線形回帰や主成分分析等を用いる場合の前処理）
+def standardize(train_X, test_X):
+    """
+    args:
+        train_X: 学習用説明変数のデータフレーム （num_samples, num_features）
+        test_X: テスト用説明変数のデータフレーム （num_samples, num_features）
+    return:
+        train_X_std: 標準化された学習用説明変数のデータフレーム （num_samples, num_features）
+        test_X_std: 標準化されたテスト用説明変数のデータフレーム （num_samples, num_features）
+    """
+    from sklearn.preprocessing import StandardScaler
+    sc = StandardScaler()
+    # 学習用説明変数のみを用いて標準化のための平均値と標準偏差を算出
+    sc.fit(train_X)
+    # 学習用説明変数とテスト用説明変数を標準化
+    train_X_std = sc.transform(train_X)
+    test_X_std = sc.transform(test_X)
+    # numpy配列からpandasのデータフレームに変換
+    train_X_std = pd.DataFrame(train_X_std)
+    test_X_std = pd.DataFrame(test_X_std)
+    return train_X_std, test_X_std
 
-# # データ加工
-# def data_processing(train_features, test_features, encoding):
+# 主成分分析による次元削減（事前に標準化等による前処理を行う必要あり）
+def dim_reduction_PCA(train_X, test_X, n_component=5):
+    """
+    args:
+        train_X: 学習用説明変数のデータフレーム （num_samples, num_features）
+        test_X: テスト用説明変数のデータフレーム （num_samples, num_features）
+    """
+    from sklearn.decomposition import PCA
+    pca = PCA(n_component=n_component).fit(train_X)
+    train_X_pca = pca.transform(train_X)
+    test_X_pca = pca.transform(test_X)
+    # 主成分の累積値を表示
+    plt.plot(np.cumsum(pca.explained_variance_ratio_))
+    plt.xlabel('number of components')
+    plt.ylabel('cumulative explained variance')
+    plt.show()
+    return train_X_pca, test_X_pca
 
-#     df = cat_encoding(train_features, test_features, encoding)
+# 目的変数との相関が高い説明変数のみを抽出
+def extract_high_corr_variables(df, threshold, target_column, id_column=None):
+    """
+    args:
+        df: 学習特徴量のデータフレーム （num_samples, num_features）
+        threshold: 説明変数選択時の目的変数との相関係数の閾値（閾値以上の説明変数を特徴量として使用） 
+        target_column: 目的変数の列名 (str)
+        id_column: IDの列名 (str)
+    return:
+        df: 特徴量選択後のデータフレーム （num_samples, num_features）
+    """
+    original_df = df
+    # IDとなる特徴量を一時的に削除
+    if id_column != None:
+        df = df.drop(id_column, axis=1)
+    # 変数間の相関を算出 
+    df_corr = show_corr(df)
+    # 相関係数が閾値以上の特徴量のみを抽出（同時にIDの列を元に戻す）
+    column_dict = (abs(df_corr[target_column]) >= threshold).to_dict()
+    df = original_df[[id_column] + [key for key, value in column_dict.items() if value == True]]
+    return df 
 
-#     return train_features, test_features, cat_indices
 
 
 """
 モデルの定義
 """
+# 線形モデル（重回帰分析、ラッソ回帰、リッジ回帰）
+def my_linear_regression(train_X, train_y):
+    """
+    args:
+        train_X: 学習用説明変数のデータフレーム （num_samples, num_features）
+        train_y: 学習用目的変数のデータフレーム （num_samples, num_features）
+    return:
+        lr_model: 学習後の重回帰モデル
+        lasso_model: 学習後のラッソ回帰モデル
+        ridge_model: 学習後のリッジ回帰モデル
+    """
+    from sklearn.linear_model import LinearRegression, Lasso, Ridge
+    lr_model = LinearRegression(fit_intercept=True)
+    lr_model.fit(train_X, train_y)
+    lasso_model = Lasso(fit_intercept=True)
+    lasso_model.fit(train_X, train_y)
+    ridge_model = Ridge(fit_intercept=True)
+    ridge_model.fit(train_X, train_y)
+    return lr_model, lasso_model, ridge_model
+
+
 # LightGBM（Training APIバージョン）
 import lightgbm as lgb
 def my_lgbm(train_X, train_y, valid_X, valid_y, metrics, cat_indices):
     """
-    train_X: 学習特徴量のデータフレーム （num_samples, num_features）
-    valid_X: 検証特徴量のデータフレーム （num_samples, num_features）
-    X_valid: 検証特徴量のデータフレーム （num_samples, num_features）
-    cat_indices: カテゴリ変数のインデックスのリスト （'auto' or Python List）
+    args:
+        train_X: 学習特徴量のデータフレーム （num_samples, num_features）
+        valid_X: 検証特徴量のデータフレーム （num_samples, num_features）
+        X_valid: 検証特徴量のデータフレーム （num_samples, num_features）
+        cat_indices: カテゴリ変数のインデックスのリスト （'auto' or Python List）
+    return:
+        model: 学習後のモデル
     """
     # ハイパーパラメータの設定
     params = {
@@ -224,10 +372,14 @@ def my_lgbm(train_X, train_y, valid_X, valid_y, metrics, cat_indices):
 # LightGBM（Scikit-learn APIバージョン）
 def my_lgbm_sklearn_api(train_X, train_y, valid_X, valid_y, metrics, cat_indices):
     """
-    train_X: 学習特徴量のデータフレーム （num_samples, num_features）
-    valid_X: 検証特徴量のデータフレーム （num_samples, num_features）
-    X_valid: 検証特徴量のデータフレーム （num_samples, num_features）
-    cat_indices: カテゴリ変数のインデックスのリスト （'auto' or Python List）
+    args:
+        train_X: 学習用説明変数のデータフレーム （num_samples, num_features）
+        train_y: 学習用目的変数のデータフレーム （num_samples, num_features）
+        valid_X: 検証用説明変数のデータフレーム （num_samples, num_features）
+        valid_y: 検証用目的変数のデータフレーム （num_samples, num_features）
+        cat_indices: カテゴリ変数のインデックスのリスト （'auto' or Python List）
+    return:
+        model: 学習後のモデル
     """
     # モデルの作成
     model = lgb.LGBMClassifier(n_estimators=10000, objective='binary', 
@@ -255,6 +407,7 @@ def my_lgbm_sklearn_api(train_X, train_y, valid_X, valid_y, metrics, cat_indices
 モデルの学習・評価
 """
 import lightgbm as lgb
+import re
 import gc # メモリ管理用（ガベージコレクション：必要なくなったメモリ領域を自動的に開放する機能）
 import warnings # warningsを非表示
 warnings.filterwarnings('ignore')
@@ -291,11 +444,15 @@ def model(train_features, test_features, id_column, target_column, metrics='bina
     train_ids = train_features[id_column]
     test_ids = test_features[id_column]
     # 学習時に用いる正解ラベル（目的変数）を抽出
-    labels = train_features[target_column] 
+    targets = train_features[target_column] 
     # IDと目的変数を学習特徴量から削除
     train_features = train_features.drop(columns = [id_column, target_column])
     # IDと目的変数を評価特徴量から削除
     test_features = test_features.drop(columns = [id_column])
+
+    # # DataFrameのcolumns名に",[]{}:のような文字が含まれている場合エラーが出るため、余分な文字を除去
+    # train_features = train_features.rename(columns = lambda x:re.sub('[^A-Za-z0-9_]+', '', x))
+    # test_features = test_features.rename(columns = lambda x:re.sub('[^A-Za-z0-9_]+', '', x))
 
     # 特徴量エンジニアリング（欠損値の処理、カテゴリ変数の処理、基本統計量を用いた特徴量の作成など）
     # カテゴリ変数のエンコード
@@ -310,22 +467,26 @@ def model(train_features, test_features, id_column, target_column, metrics='bina
     test_features = np.array(test_features)
     # kフォールド交差検証のためのインスタンスを生成
     k_fold = KFold(n_splits=n_folds, shuffle=True, random_state=50)
+    # 時系列データに対する交差検証の場合
+    # k_fold = TimeSeriesSplit(n_splits=n_folds)
     # 特徴量の重要度を格納するnumpy配列
     feature_importance_values = np.zeros(len(feature_names)) 
     # テスト時の推定結果を格納するnumpy配列
     test_predictions = np.zeros(test_features.shape[0])
     # 検証データ（Out-of-Fold）に対する予測を格納するnumpy配列
     out_of_fold = np.zeros(train_features.shape[0])
-    # 学習時のスコアと検証時のスコアを格納するリスト
+    # 学習時のスコア、検証時のスコア、評価時（提出用データ）のスコアを格納するリスト
     train_scores = []
     valid_scores = []
     # 交差検証における各フォールドの繰り返し
     for train_indices, valid_indices in k_fold.split(train_features):
         # フォールドにおける学習データ
-        train_X, train_y = train_features[train_indices], labels[train_indices]
+        train_X, train_y = train_features[train_indices], targets[train_indices]
+        # train_X, train_y = train_features.iloc[train_indices, :], targets.iloc[train_indices] # データフレームを入力する場合
         """train_X: (num_samples, num_features), train_y: （num_samples, 1)"""
         # フォールドにおける検証データ
-        valid_X, valid_y = train_features[valid_indices], labels[valid_indices]
+        valid_X, valid_y = train_features[valid_indices], targets[valid_indices]
+        # valid_X, valid_y = train_features.iloc[valid_indices, :], targets.iloc[valid_indices] # データフレームを入力する場合
         """valid_X: (num_samples, num_features), valid_y: （num_samples, 1)"""
         # LightGBM（Training APIバージョン）の学習
         model = my_lgbm(train_X, train_y, valid_X, valid_y, metrics, cat_indices)
@@ -336,9 +497,9 @@ def model(train_features, test_features, id_column, target_column, metrics='bina
             # 最も良いスコアをマークしたイテレーション
             best_iteration = model.best_iteration
             # モデルの特徴量の重要度を記録（importance_typeはデフォルトよりもgainの方が良い？）
-            feature_importance_values += model.feature_importance(importance_type='gain') / k_fold.n_splits
+            feature_importance_values += model.feature_importance(importance_type='gain')
             # テストデータに対する予測
-            test_predictions += model.predict(test_features, num_iteration=best_iteration) / k_fold.n_splits
+            test_predictions += model.predict(test_features, num_iteration=best_iteration)
             # 検証データ（Out-of-Fold）に対する予測（フォールドごとに検証データに対する結果が格納されていく）
             out_of_fold[valid_indices] = model.predict(valid_X, num_iteration=best_iteration)
             """out_of_fold: (num_train_sample,)"""
@@ -349,9 +510,9 @@ def model(train_features, test_features, id_column, target_column, metrics='bina
             # 最も良いスコアをマークしたイテレーション
             best_iteration = model.best_iteration_
             # モデルの特徴量の重要度を記録
-            feature_importance_values += model.feature_importances_ / k_fold.n_splits
+            feature_importance_values += model.feature_importances_
             # テストデータに対する予測
-            test_predictions += model.predict_proba(test_features, num_iteration=best_iteration)[:, 1] / k_fold.n_splits
+            test_predictions += model.predict_proba(test_features, num_iteration=best_iteration)[:, 1]
             # 検証データ（Out-of-Fold）に対する予測（フォールドごとに検証データに対する結果が格納されていく）
             out_of_fold[valid_indices] = model.predict_proba(valid_X, num_iteration=best_iteration)[:, 1]
             """out_of_fold: (num_train_sample,)"""
@@ -363,6 +524,9 @@ def model(train_features, test_features, id_column, target_column, metrics='bina
         # 学習スコアと検証スコアを格納
         train_scores.append(train_score)
         valid_scores.append(valid_score)
+        # 全ホールドにおける平均値を取得
+        feature_importance_values /= k_fold.n_splits
+        test_predictions /= k_fold.n_splits
         # モデルとデータフレームを削除してメモリー解放（処理を軽くするため）
         gc.enable()
         del model, train_X, valid_X
@@ -377,10 +541,10 @@ def model(train_features, test_features, id_column, target_column, metrics='bina
     # 特徴量の重要度を示すデータフレーム
     feature_importances = pd.DataFrame({'feature': feature_names, 'importance': feature_importance_values})
     # 検証データ（Out-of-Fold）全体に対するスコア（評価指標は交差検証時とは異なる場合あり）
-    valid_auc = log_loss(labels, out_of_fold)
+    all_oof_score = log_loss(targets, out_of_fold)
     # 全体に対する（最終的な）学習スコアと検証スコアを追加
     train_scores.append(np.mean(train_scores))
-    valid_scores.append(valid_auc)
+    valid_scores.append(all_oof_score)
     # 学習スコアと検証スコアを確認するためのデータフレームを作成
     fold_names = list(range(n_folds))
     fold_names.append('overall')
@@ -389,6 +553,50 @@ def model(train_features, test_features, id_column, target_column, metrics='bina
                             'valid': valid_scores}) 
     
     return submission, feature_importances, metrics_results
+
+
+# アンサンブル
+def ensemble(pred_result_df_list, target_column, submission_sample_df, output_path, ensemble_type="simple_average"):
+    """
+    Args:
+        pred_result_df_list (list): 予測結果のデータフレーム（IDと目的変数の列を含む） のリスト
+        target_column (string): 目的変数の列名
+        submission_sample_df (pd.DataFrame): 提出用のサンプルデータフレーム
+        output_path (string): 結果を出力するパス 
+        ensemble_type (string): アンサンブルのタイプ（単純平均: simple_average, 加重平均: weighted_average）
+    Return:
+        ensemble_df (pd.DataFrame): アンサンブルによって得られた結果のデータフレーム（num_samples, num_features）
+    """
+    # アンサンブルの結果を格納する変数を用意
+    ensemble_df = submission_sample_df
+    ensemble_result = pred_result_df_list[0]
+    # すべて0で初期化
+    ensemble_result[:] = 0
+    # 予測結果間の相関を可視化（予測値同士の相関が低い方がモデルの多様性が高まるため精度向上につながる）
+    for i, pred_result_df in pred_result_df_list:
+        # 予測結果間の相関を可視化するためのデータフレーム
+        if i == 0:
+            pred_results_df_for_visualizaton = pd.DataFrame({'pred_result_df_0': pred_result_df[target_column]})
+        else:
+            pred_results_df_for_visualizaton[f'pred_result_df_{i}'] = pred_result_df[target_column]
+        # 単純平均
+        if ensemble_type == "simple_average":
+            ensemble_result += pred_result_df[target_column] / len(pred_result_df_list) 
+        # 加重平均
+        elif ensemble_type == "weighted_average":
+            weight = [0.3, 0.7]
+            weight /= np.sum(weight)
+            ensemble_result += pred_result_df * weight[i]
+    # 出力用のデータフレームに格納
+    ensemble_df[target_column] = ensemble_result
+    # 予測結果間の相関を可視化（予測値同士の相関が低い方がモデルの多様性が高まるため精度向上につながる）
+    pred_results_df_corr = pred_results_df_for_visualizaton.corr()
+    fig, ax = plt.subplots(figsize=(12, 9))
+    sns.heatmap(pred_results_df_corr, square=True, vmax=1, vmin=-1, center=0)
+    # 結果を出力
+    ensemble_df.to_csv(output_path, index=False)
+    return ensemble_df
+
 
 
 

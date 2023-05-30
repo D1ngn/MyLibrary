@@ -931,13 +931,25 @@ def calc_ideal_ratio_mask(self, target_spec, noise_spec):
 def mecab_wakati(text):
     import MeCab
     import re
+    import mojimoji
+    import emoji # ver=1.7.0でないとエラーが出る可能性あり
     # MeCabで分かち書き -dに辞書を指定
     tagger = MeCab.Tagger("-Owakati -d /usr/lib/x86_64-linux-gnu/mecab/dic/mecab-ipadic-neologd")
     text = tagger.parse(text)
-    # 半角全角英数字除去
-    text = re.sub(r'[0-9０-９a-zA-Zａ-ｚＡ-Ｚ]+', " ", text)
-    # 記号もろもろ除去
+    # 半角全角数字の除去
+    text = re.sub(r'[0-9０-９]+', " ", text)
+    # 記号の除去
     text = re.sub(r'[\．_－―─！＠＃＄％＾＆\-‐|\\＊\“（）＿■×+α※÷⇒—●★☆〇◎◆▼◇△□(：〜～＋=)／*&^%$#@!~`){}［］…\[\]\"\'\”\’:;<>?＜＞〔〕〈〉？、。・,\./『』【】「」→←○《》≪≫\n\u3000]+', "", text)
+    # 絵文字の削除
+    text = ''.join(c for c in text if c not in emoji.UNICODE_EMOJI)
+    # URLの削除
+    text = re.sub('https?://[\da-zA-Z!\?/\+\-_~=;\.,\*&@#\$%\(\)\'\[\]]+', '', text)
+    # 全角から半角に変換（カナは除く）
+    result = mojimoji.zen_to_han(text, kana=False)
+    # 半角カナから全角カナに変換
+    result = mojimoji.han_to_zen(result, ascii=False)
+    # 全ての文字を小文字に変換
+    result = result.lower()
     # スペースで区切って形態素の配列へ
     wakati = text.split(" ")
     # 空の要素は削除

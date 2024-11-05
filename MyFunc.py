@@ -929,6 +929,14 @@ def calc_ideal_ratio_mask(self, target_spec, noise_spec):
 """
 # Mecabを用いた形態素解析(Morphological Analysis)
 def mecab_wakati(text):
+    """
+    Description:
+        日本語テキストの形態素解析と前処理を実施
+    Args:
+        text <str>: 日本語テキストデータ
+    Return:
+        wakati <list>: 形態素解析＋前処理されたデータ
+    """
     import MeCab
     import re
     import mojimoji

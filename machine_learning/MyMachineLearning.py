@@ -48,6 +48,22 @@ def missing_values_table(df):
             " columns that have missing values.")
     return mis_val_table_ren_columns
 
+# 分類ラベルの数と割合を算出（学習データとテストデータに含まれるラベルの割合チェック用）
+def analyze_label(df, label):
+    """
+    df: pandasのデータフレーム （num_samples, num_features）
+    label: ラベルを含む列名 str型
+    """
+    # ユニークなラベルの種類とその個数を取得
+    unique_labels = df[label].value_counts()
+    # 全データに対する各ラベルの割合を算出
+    unique_labels_ratio = (100 * unique_labels / len(df)).round(1)
+    # ラベルの数とラベルの割合を横方向に結合し、表を作成
+    unique_labels_table = pd.concat([unique_labels, unique_labels_ratio], axis=1)
+    # カラム名を変更
+    unique_labels_table = unique_labels_table.reset_index().set_axis([label, "Number of labels", "% of labels"], axis=1)
+    return unique_labels_table
+
 # カテゴリ変数の分析
 def analyze_categorical(df, column_name):
     """
@@ -244,8 +260,26 @@ def cat_encoding(train_features, test_features, encoding='ohe'):
         raise ValueError("Encoding must be either 'ohe' or 'le'")
     return train_features, test_features, cat_indices
 
-# 標準化処理（線形回帰や主成分分析等を用いる場合の前処理）
-def standardize(train_X, test_X):
+# 標準化処理（線形回帰や主成分分析、k-Means等を用いる場合の前処理）
+def standardize(df):
+    """
+    args:
+        df: pandasのデータフレーム （num_samples, num_features）
+    return:
+        df_std: 標準化されたデータフレーム （num_samples, num_features）
+    """
+    from sklearn.preprocessing import StandardScaler
+    sc = StandardScaler()
+    # 学習用説明変数のみを用いて標準化のための平均値と標準偏差を算出
+    sc.fit(df)
+    # 学習用説明変数とテスト用説明変数を標準化
+    df_std = sc.transform(df)
+    # numpy配列からpandasのデータフレームに変換
+    df_std = pd.DataFrame(df_std)
+    return df_std
+
+# 標準化処理（線形回帰や主成分分析、k-Means等を用いる場合の前処理）（学習データとテストデータをセットで行う場合）
+def standardize_train_test(train_X, test_X):
     """
     args:
         train_X: 学習用説明変数のデータフレーム （num_samples, num_features）
@@ -266,7 +300,7 @@ def standardize(train_X, test_X):
     test_X_std = pd.DataFrame(test_X_std)
     return train_X_std, test_X_std
 
-# 主成分分析による次元削減（事前に標準化等による前処理を行う必要あり）
+# 主成分分析による次元削減（逆相関のあるデータには使用できず、事前に標準化等による前処理を行う必要あり）
 def dim_reduction_PCA(train_X, test_X, n_component=5):
     """
     args:
@@ -274,15 +308,20 @@ def dim_reduction_PCA(train_X, test_X, n_component=5):
         test_X: テスト用説明変数のデータフレーム （num_samples, num_features）
     """
     from sklearn.decomposition import PCA
+    import matplotlib.ticker as ticker
     pca = PCA(n_component=n_component).fit(train_X)
     train_X_pca = pca.transform(train_X)
     test_X_pca = pca.transform(test_X)
-    # 主成分の累積値を表示
-    plt.plot(np.cumsum(pca.explained_variance_ratio_))
-    plt.xlabel('number of components')
-    plt.ylabel('cumulative explained variance')
+    # 主成分の累積寄与率を表示
+    plt.gca().get_xaxis().set_major_locator(ticker.MaxNLocator(integer=True))
+    plt.plot([0] + list(np.cumsum(pca.explained_variance_ratio_)), "-o")
+    plt.xlabel("Number of principal components")
+    plt.ylabel("Cumulative contribution rate")
+    plt.grid()
     plt.show()
-    return train_X_pca, test_X_pca
+    # 主成分負荷量（因子負荷量）を算出
+    pca_loadings = pd.DataFrame(pca.components_.T, index=[train_X.columns], columns=["主成分{}".format(i+1) for i in range(n_component)])
+    return train_X_pca, test_X_pca, pca_loadings
 
 # 目的変数との相関が高い説明変数のみを抽出
 def extract_high_corr_variables(df, threshold, target_column, id_column=None):
@@ -306,6 +345,62 @@ def extract_high_corr_variables(df, threshold, target_column, id_column=None):
     df = original_df[[id_column] + [key for key, value in column_dict.items() if value == True]]
     return df 
 
+
+"""
+データ分析
+"""
+# 因子分析
+def dim_reduction_PCA(df, n_component=5, max_iter=5000):
+    """
+    args:
+        df: pandasのデータフレーム （num_samples, num_features）
+    """
+    from sklearn.decomposition import FactorAnalysis as FA
+    fa = FA(n_component=n_component, max_iter=max_iter)
+    _ = fa.fit_transform(df)
+    factor = fa.components_.T
+    fa_df = pd.DataFrame(factor, 
+                         index=[df.columns], 
+                         columns=["第{}因子".format(i+1) for i in range(n_component)]
+                         )
+    # 主成分の累積寄与率を表示
+    sns.heatmap(fa_df, cmap='RdBu_r')
+    plt.show()
+    return factor
+
+# クラスター分析（主成分分析を用いて2軸に落とし込み、クラス分けした結果を表示）
+def cluster_analysis(df, n_clusters=4, n_components=2, colors=['#BC4328', '#346A96', '#49711E', '#E6B600']):
+    """
+    args:
+        df: pandasのデータフレーム （num_samples, num_features）
+    """
+    from sklearn.cluster import KMeans
+    from sklearn.decomposition import PCA
+    from adjustText import adjust_text
+    # IDの削除
+    df_rm = df.drop(['ID'])
+    # データの標準化
+    df_std = standardize(df)
+    # K-means法によるクラスタリング
+    model = KMeans(n_clusters=n_clusters, random_state=1).fit(df_std)
+    # 主成分分析による時限削減を行い、2次元にする
+    pca = PCA(n_components=n_components)
+    pca.fit(df_std)
+    pca.fit(df_std)
+    features = pca.fit_transform()
+    # 第1主成分と第2主成分でプロット
+    i = 0
+    texts = []
+    for x, y, name in zip(features[:, 0], features[:, 1], df['ID']):
+        texts.append(plt.text(x, y, name, alpha=0.8, size=10))
+        plt.scatter(features[i, 0], features[i, 1], alpha=0.8, c=colors[int(model.labels_[i])])
+        i += 1
+    # IDの表示を見やすくする
+    adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+    plt.title("主成分分析×クラスター分析")
+    plt.xlabel("第1主成分")
+    plt.ylabel("第2主成分")
+    plt.show()
 
 
 """
@@ -524,9 +619,6 @@ def model(train_features, test_features, id_column, target_column, metrics='bina
         # 学習スコアと検証スコアを格納
         train_scores.append(train_score)
         valid_scores.append(valid_score)
-        # 全ホールドにおける平均値を取得
-        feature_importance_values /= k_fold.n_splits
-        test_predictions /= k_fold.n_splits
         # モデルとデータフレームを削除してメモリー解放（処理を軽くするため）
         gc.enable()
         del model, train_X, valid_X
@@ -535,7 +627,10 @@ def model(train_features, test_features, id_column, target_column, metrics='bina
     gc.enable()
     del train_features
     gc.collect()
-        
+    
+    # 全ホールドにおける平均値を取得
+    feature_importance_values /= k_fold.n_splits
+    test_predictions /= k_fold.n_splits
     # 提出用のデータフレーム
     submission = pd.DataFrame({id_column: test_ids, target_column: test_predictions})
     # 特徴量の重要度を示すデータフレーム
@@ -592,7 +687,7 @@ def ensemble(pred_result_df_list, target_column, submission_sample_df, output_pa
     # 予測結果間の相関を可視化（予測値同士の相関が低い方がモデルの多様性が高まるため精度向上につながる）
     pred_results_df_corr = pred_results_df_for_visualizaton.corr()
     fig, ax = plt.subplots(figsize=(12, 9))
-    sns.heatmap(pred_results_df_corr, square=True, vmax=1, vmin=-1, center=0)
+    sns.heatmap(pred_results_df_corr, square=True, vmax=1, vmin=-1, center=0, cmap='RdBu_r')
     # 結果を出力
     ensemble_df.to_csv(output_path, index=False)
     return ensemble_df
@@ -635,17 +730,61 @@ def plot_feature_importances(df, num_display_features=15):
 
 
 # 混同行列の作成
-def mk_confusion_matrix(label, predicted):
+def mk_confusion_matrix(data, target_column, label_list, predicted_list):
     """
-    label: true label of data
-    predicted: predicted result of data
+    data: input data (pd.DataFrame)
+    target_column: 目的変数の列名 (str)
+    label_list: true label of data (list or pd.Series)
+    predicted_list:  predicted result of data (list or pd.Series)
     """
     from sklearn.metrics import confusion_matrix
-    matrix = confusion_matrix(label, predicted)
-
-    sns.heatmap(matrix, square=True, annot=True, cbar=False, cmap='RdPu')
+    # 分類の全パターンを取得
+    labels = data[target_column].unique()
+    # 混同行列の生成（同時にラベルの順序を指定）
+    matrix = confusion_matrix(label_list, predicted_list, labels=labels)
+    # データフレームにした後ヒートマップで見やすく可視化
+    matrix_df = pd.DataFrame(matrix, columns=labels, index=labels)
+    sns.heatmap(matrix_df, square=True, annot=True, cbar=False, cmap='Blues')
     plt.xlabel('predicted value')
     plt.ylabel('true value')
+    plt.show()
+
+# 分類タスクの各評価指標値の算出＋可視化
+def classification_eval(df, act_column, pred_column):
+    """
+    df: 正解値と推定値を含むデータフレーム（pd.DataFrame）
+    act_column: 正解値を格納した列名（str）
+    pred_column: 推定値を格納した列名（str）
+    """
+    from sklearn.metrics import precision_score
+    from sklearn.metrics import recall_score
+    from sklearn.metrics import accuracy_score
+    from sklearn.metrics import f1_score
+    # 評価指標算出
+    micro_precision = precision_score(df[act_column], df[pred_column], average='micro')
+    macro_precision = precision_score(df[act_column], df[pred_column], average='macro')
+    micro_recall = recall_score(df[act_column], df[pred_column], average='micro')
+    macro_recall = recall_score(df[act_column], df[pred_column], average='macro')
+    accuracy = accuracy_score(df[act_column], df[pred_column]) # accuracy = micro f1
+    macro_f1 = f1_score(df[act_column], df[pred_column], average='macro')
+    # 辞書にまとめる
+    eval_dic = {
+        'micro-precision': micro_precision,
+        'macro-precision': macro_precision,
+        'micro-recall': micro_recall,
+        'macro-recall': macro_recall,
+        'accuracy (micro-F1)': accuracy,
+        'macro-F1': macro_f1
+    }
+    # 可視化用にデータフレームに変換
+    eval_df = pd.Dataframe(eval_dic, index=['eval_result'])
+    # 棒グラフで可視化
+    plt.figure(figsize=(9, 6))
+    ax = sns.barplot(data=eval_df, palette='Blues')
+    # グラフに数値を書き込む
+    for i in range(len(ax.containers)):
+        ax.bar_label(ax.containers[i], fmt='%.2f', label_type='edge')
+    plt.ylim(0, 1)
     plt.show()
 
 

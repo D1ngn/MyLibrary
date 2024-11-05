@@ -94,7 +94,8 @@ SELECT
     EXTRACT(minute FROM date_time),
     EXTRACT(second FROM date_time),
     EXTRACT(dow FROM date_time)
-FROM tbl
+FROM 
+    tbl
 ;
 
 -- YYYYMMDD形式の文字列からtimestamp型に変換し、年数差（1年未満は切り捨て）を算出
@@ -106,7 +107,19 @@ SELECT
     TO_CHAR(year, 'FM0000') -- 4桁の場合
     TO_CHAR(month, 'FM00') -- 2桁の場合
     TO_CHAR(day, 'FM00') -- 2桁の場合
-FROM tbl
+FROM 
+    tbl
+;
+
+-- 日付の差分を算出
+-- date_timeはdate型またはtimestamp型
+SELECT
+    "ID",
+    date_time AS "決済日時",
+    LEAD("決済日時", 1) OVER(PARTITION BY "ID" ORDER BY "決済日時") AS "次回決済日時",
+    DATEDIFF(day, "決済日時", "次回決済日時") AS "決済間隔"
+FROM 
+    tbl
 ;
 
 
